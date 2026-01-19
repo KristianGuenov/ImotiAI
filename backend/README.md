@@ -45,7 +45,7 @@ Imot bg
 Imoti.net
 Imoti.info
 Bazar.bg Real Estate
-Homes.bg 
+Holmes.bg 
 Imoteka.bg
 Address.bg
 Unique Estates
