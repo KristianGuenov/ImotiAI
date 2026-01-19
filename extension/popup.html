@@ -27,7 +27,7 @@
         <div class="grid2">
           <label class="lbl">
             Max pages
-            <input id="maxPages" type="number" min="1" max="1000" value="10" />
+            <input id="maxPages" type="number" min="1" max="200" value="10" />
           </label>
           <label class="lbl">
             Delay (ms)
@@ -38,10 +38,7 @@
           <button id="btnBatch">Extract next pages</button>
           <button id="btnStop" class="danger" disabled>Stop</button>
         </div>
-        <div class="hint">
-          Traverses the site’s normal “Next” page control and extracts each page.
-          Stops when no next page is found or max pages is reached.
-        </div>
+        <div class="hint">Traverses the site’s normal “Next” page control and extracts each page. Stops when no next page is found or max pages is reached.</div>
       </div>
 
       <hr class="sep" />
@@ -64,6 +61,18 @@
         <div class="hint">Scrolls to load additional items, then extracts the page once loading stabilizes.</div>
       </div>
 
+      <hr class="sep" />
+
+      <div class="section">
+        <div class="sectionTitle">Site onboarding (tuning helper)</div>
+        <div class="row">
+          <button id="btnOnboard">Run checklist</button>
+          <button id="btnCopyOverride" disabled>Copy override JSON</button>
+          <button id="btnSaveOverride" disabled>Save override</button>
+        </div>
+        <div class="hint">Generates a suggested per-site profile override and basic diagnostics for new sites.</div>
+      </div>
+
       <div class="row">
         <button id="btnOptions" class="link">Options</button>
         <span id="status" class="status">Idle</span>
@@ -74,6 +83,9 @@
       <div class="meta">
         <div><strong>URL:</strong> <span id="url">—</span></div>
         <div><strong>Items:</strong> <span id="count">0</span></div>
+        <div><strong>Profile:</strong> <span id="profile">—</span></div>
+        <div><strong>Strategy:</strong> <span id="strategy">—</span></div>
+        <div><strong>Timing:</strong> <span id="timing">—</span></div>
         <div><strong>Last run id:</strong> <span id="lastId">—</span></div>
       </div>
       <pre id="preview" class="preview">Run “Extract this page” to see a sample.</pre>

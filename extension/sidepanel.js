@@ -1,5 +1,6 @@
 /* global chrome */
 let lastResult = null;
+let lastOnboard = null;
 let isRunningBatch = false;
 
 const $ = (id) => document.getElementById(id);
@@ -24,6 +25,19 @@ function setBatchStatus(text, kind = "ok") {
 
 function setLastId(id) {
   $("lastId").textContent = id ? String(id) : "—";
+}
+
+function setExtractionMeta(result) {
+  const meta = result?.meta || {};
+  $("profile").textContent = meta.siteProfileUsed || "—";
+  $("strategy").textContent = meta.strategyUsed || "—";
+  $("timing").textContent = typeof meta.timingMs === "number" ? `${meta.timingMs} ms` : "—";
+}
+
+function formatOnboarding(report) {
+  const checklist = report?.checklist || {};
+  const override = report?.recommendedOverride || {};
+  return JSON.stringify({ checklist, recommendedOverride: override, timingMs: report?.timingMs ?? null }, null, 2);
 }
 
 function downloadJson(obj, filename) {
@@ -64,12 +78,14 @@ async function doExtract() {
   $("btnExport").disabled = true;
   $("preview").textContent = "Working…";
   lastResult = null;
+  setExtractionMeta(null);
 
   const resp = await sendMessage({ type: "DETECT_AND_EXTRACT" });
   if (!resp?.ok) throw new Error(resp?.error || "Extraction failed");
 
   lastResult = resp.result;
   $("count").textContent = String((lastResult.items || []).length);
+  setExtractionMeta(lastResult);
   $("preview").textContent = JSON.stringify(
     {
       pageTitle: lastResult.pageTitle,
@@ -138,6 +154,7 @@ async function doLoadMore() {
 
     lastResult = resp.result;
     $("count").textContent = String((lastResult.items || []).length);
+    setExtractionMeta(lastResult);
     $("preview").textContent = JSON.stringify(
       {
         pageTitle: lastResult.pageTitle,
@@ -159,6 +176,26 @@ async function doLoadMore() {
     $("batchLog").textContent = String(e?.message || e);
     setBatchStatus("Error", "err");
   }
+}
+
+async function doOnboard() {
+  setStatus("Onboarding…", "ok");
+  $("btnCopyOverride").disabled = true;
+  $("btnSaveOverride").disabled = true;
+  lastOnboard = null;
+
+  const resp = await sendMessage({ type: "ONBOARD_SITE" });
+  if (!resp?.ok) throw new Error(resp?.error || "Onboarding failed");
+
+  lastOnboard = resp.report;
+  $("onboardOut").textContent = formatOnboarding(lastOnboard);
+
+  const hostname = lastOnboard?.checklist?.hostname;
+  const overrideForHost = hostname ? lastOnboard?.recommendedOverride?.[hostname] : null;
+  $("btnCopyOverride").disabled = !overrideForHost;
+  $("btnSaveOverride").disabled = !overrideForHost;
+
+  setStatus("Onboarding ready", "ok");
 }
 
 async function checkHealth() {
@@ -187,7 +224,7 @@ async function openDocs() {
     chrome.storage.sync.get({ endpoint: "" }, (items) => resolve(items));
   });
 
-  const base = (settings.endpoint || "").replace(/\/api\/v1\/extractions\s*$/i, "");
+ const base = (settings.endpoint || "").replace(/\/api\/v1\/extractions\s*$/i, "");
   if (!base) return;
   chrome.tabs.create({ url: base + "/docs" });
 }
@@ -227,6 +264,49 @@ function wire() {
   $("btnBatch").addEventListener("click", doBatchPagination);
   $("btnStop").addEventListener("click", doStopBatch);
   $("btnLoadMore").addEventListener("click", doLoadMore);
+
+  // Onboarding / tuning
+  $("btnOnboard").addEventListener("click", async () => {
+    try {
+      await refreshTabInfo();
+      await doOnboard();
+    } catch (e) {
+      $("onboardOut").textContent = String(e?.message || e);
+      setStatus("Onboarding error", "err");
+    }
+  });
+
+  $("btnCopyOverride").addEventListener("click", async () => {
+    try {
+      const hostname = lastOnboard?.checklist?.hostname;
+      const overrideForHost = hostname ? lastOnboard?.recommendedOverride?.[hostname] : null;
+      if (!overrideForHost) return;
+      await navigator.clipboard.writeText(JSON.stringify({ [hostname]: overrideForHost }, null, 2));
+      setStatus("Override copied", "ok");
+    } catch (e) {
+      setStatus("Copy failed", "err");
+    }
+  });
+
+  $("btnSaveOverride").addEventListener("click", async () => {
+    try {
+      const hostname = lastOnboard?.checklist?.hostname;
+      const overrideForHost = hostname ? lastOnboard?.recommendedOverride?.[hostname] : null;
+      if (!hostname || !overrideForHost) return;
+      await sendMessage({ type: "SAVE_SITE_OVERRIDE", hostname, override: overrideForHost });
+      setStatus("Override saved", "ok");
+    } catch (e) {
+      setStatus("Save failed", "err");
+    }
+  });
+
+  $("btnClearOnboard").addEventListener("click", () => {
+    lastOnboard = null;
+    $("onboardOut").textContent = "Run “Run checklist” on a listings page to generate a suggested override.";
+    $("btnCopyOverride").disabled = true;
+    $("btnSaveOverride").disabled = true;
+    setStatus("Cleared", "ok");
+  });
 
   $("btnHealth").addEventListener("click", checkHealth);
   $("btnOpenDocs").addEventListener("click", openDocs);

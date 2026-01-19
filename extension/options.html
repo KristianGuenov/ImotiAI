@@ -9,7 +9,7 @@
   <body>
     <main>
       <h1>Options</h1>
-      <p>Configure where extracted data is sent.</p>
+      <p>Configure where extracted data is sent, and optionally tune per-site extraction.</p>
 
       <div class="card">
         <label>
@@ -27,6 +27,34 @@
           Auto-send to backend after each extraction
         </label>
 
+        <hr />
+
+        <label>
+          Site tuning (optional, JSON)
+          <textarea
+            id="siteTuningText"
+            rows="10"
+            spellcheck="false"
+            placeholder='{
+  "imoti.net": {
+    "pagination": { "nextSelectors": [".pagination a.next"] }
+  },
+  "*.example.com": {
+    "discovery": {
+      "strategies": [
+        { "type": "anchorsContain", "hrefIncludes": "/listing", "cardRootClosest": ["article","li","div"], "minItems": 6, "maxItems": 120 }
+      ]
+    },
+    "timing": { "waitForSelector": ".results", "waitTimeoutMs": 12000 }
+  }
+}'
+          ></textarea>
+          <small>
+            Keys are hostnames (exact) or wildcard (<code>*.domain.com</code>). Values are merged into built-in site profiles.
+            If a site breaks, tune here instead of changing code.
+          </small>
+        </label>
+
         <div class="row">
           <button id="btnSave">Save</button>
           <span id="status" class="status"></span>
@@ -37,6 +65,7 @@
           <ul>
             <li>If you change the backend domain, update <code>host_permissions</code> in <code>manifest.json</code>.</li>
             <li>For production, use HTTPS and a scoped API key.</li>
+            <li>If the JSON is invalid, it will be treated as empty (<code>{}</code>).</li>
           </ul>
         </details>
       </div>

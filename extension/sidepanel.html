@@ -60,6 +60,9 @@
               <div class="meta">
                 <div><strong>URL:</strong> <span id="url">—</span></div>
                 <div><strong>Items:</strong> <span id="count">0</span></div>
+                <div><strong>Profile:</strong> <span id="profile">—</span></div>
+                <div><strong>Strategy:</strong> <span id="strategy">—</span></div>
+                <div><strong>Timing:</strong> <span id="timing">—</span></div>
                 <div><strong>Last run id:</strong> <span id="lastId">—</span></div>
               </div>
             </div>
@@ -67,6 +70,20 @@
             <div class="card">
               <div class="cardTitle">Preview</div>
               <pre class="preview" id="preview">Click “Extract” to capture items.</pre>
+            </div>
+
+            <div class="card">
+              <div class="cardTitle">Onboarding (tuning helper)</div>
+              <div class="btnRow">
+                <button class="primary" id="btnOnboard">Run checklist</button>
+                <button id="btnCopyOverride" disabled>Copy override JSON</button>
+              </div>
+              <div class="btnRow">
+                <button id="btnSaveOverride" disabled>Save override</button>
+                <button class="ghost" id="btnClearOnboard">Clear</button>
+              </div>
+              <div class="hint">For new sites, generates diagnostics and a suggested per-host override.</div>
+              <pre class="preview" id="onboardOut">Run “Run checklist” on a listings page to generate a suggested override.</pre>
             </div>
           </div>
         </section>
