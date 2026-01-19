@@ -2,6 +2,8 @@
 let lastResult = null;
 let isRunningBatch = false;
 
+const MAX_PAGES = 1000;
+
 async function getSettings() {
   return new Promise((resolve) => {
     chrome.storage.sync.get({ autoSend: false }, (items) => resolve(items));
@@ -122,7 +124,7 @@ $("btnBatch").addEventListener("click", async () => {
   $("btnStop").disabled = false;
   setStatus("Batch starting…");
 
-  const maxPages = Math.max(1, Math.min(200, parseInt($("maxPages").value || "10", 10)));
+  const maxPages = Math.max(1, Math.min(MAX_PAGES, parseInt($("maxPages").value || "10", 10)));
   const delayMs = Math.max(0, Math.min(20000, parseInt($("delayMs").value || "1500", 10)));
 
   try {

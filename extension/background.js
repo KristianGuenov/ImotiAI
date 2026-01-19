@@ -4,6 +4,8 @@ const DEFAULTS = {
   apiKey: "dev-key-change-me",
 };
 
+const MAX_PAGES = 1000;
+
 let stopRequested = false;
 
 function hostFromUrl(url) {
@@ -96,7 +98,7 @@ function makeUtf8Safe(obj) {
 async function runExtraction(tabId) {
   await ensureContentScript(tabId);
 
-  // ✅ FIX: content.js expects RUN_EXTRACTION (not DETECT_AND_EXTRACT)
+  // content.js expects RUN_EXTRACTION
   const resp = await sendToTab(tabId, { type: "RUN_EXTRACTION" });
   if (!resp?.ok) throw new Error(resp?.error || "Content extraction failed");
 
@@ -106,11 +108,9 @@ async function runExtraction(tabId) {
 async function runLoadMoreThenExtract(tabId, options) {
   await ensureContentScript(tabId);
 
-  // ✅ FIX: LOAD_MORE then RUN_EXTRACTION (content.js supports these)
   const lm = await sendToTab(tabId, { type: "LOAD_MORE", options });
   if (!lm?.ok) throw new Error(lm?.error || "Load more failed");
 
-  // Give it a beat to render new items
   await delay(Math.max(200, Math.min(4000, Number(options?.afterLoadDelayMs || 800))));
 
   const resp = await sendToTab(tabId, { type: "RUN_EXTRACTION" });
@@ -122,7 +122,6 @@ async function runLoadMoreThenExtract(tabId, options) {
 async function navigateNext(tabId) {
   await ensureContentScript(tabId);
 
-  // ✅ FIX: content.js expects NAVIGATE_NEXT_PAGE (not NAVIGATE_NEXT)
   const resp = await sendToTab(tabId, { type: "NAVIGATE_NEXT_PAGE" });
   return !!resp?.ok && !!resp?.didNavigate;
 }
@@ -130,7 +129,7 @@ async function navigateNext(tabId) {
 async function batchExtractPagination(tabId, options) {
   stopRequested = false;
 
-  const maxPages = Math.max(1, Math.min(200, Number(options?.maxPages || 25)));
+  const maxPages = Math.max(1, Math.min(MAX_PAGES, Number(options?.maxPages || 25)));
   const delayMs = Math.max(0, Math.min(20000, Number(options?.delayMs || 2500)));
 
   let pagesDone = 0;
@@ -163,7 +162,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return;
     }
 
-    // Popup can still send DETECT_AND_EXTRACT; background translates it correctly now
     if (msg?.type === "DETECT_AND_EXTRACT") {
       const tab = await getActiveTab();
       const result = await runExtraction(tab.id);

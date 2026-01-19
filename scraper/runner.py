@@ -357,7 +357,7 @@ class PlaywrightExtractor:
 
             # Pagination mode
             if target.mode == "pagination":
-                max_pages = max(1, min(200, int(target.max_pages)))
+                max_pages = max(1, min(20000, int(target.max_pages)))
                 delay_ms = max(0, min(20_000, int(target.delay_ms)))
 
                 # loop detection in THIS attempt

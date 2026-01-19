@@ -82,9 +82,10 @@
   }
 
   class ListCandidate {
-    constructor(container, items, score, avgSim) {
+    constructor(container, items, totalCount, score, avgSim) {
       this.container = container;
-      this.items = items;
+      this.items = items; // capped list for extraction
+      this.totalCount = totalCount; // full child count (for load-more growth detection)
       this.score = score;
       this.avgSim = avgSim;
     }
@@ -93,7 +94,7 @@
   class ListDetector {
     constructor() {
       this.MIN_ITEMS = 4;
-      this.MAX_ITEMS = 80;
+      this.MAX_ITEMS = 200;
     }
     detect() {
       const containers = this._collectContainers();
@@ -102,6 +103,7 @@
         const kids = Array.from(c.children || []).filter((x) => x instanceof Element);
         if (kids.length < this.MIN_ITEMS) continue;
 
+        const totalCount = kids.length;
         const items = kids.slice(0, this.MAX_ITEMS);
         const fp0 = Fingerprint.fromElement(items[0]);
         const sims = [];
@@ -118,7 +120,7 @@
         const textLen = DomText.visibleText(c, 800).length;
 
         const score = items.length * avgSim + linkRatio * 5 + Math.min(textLen / 400, 2);
-        candidates.push(new ListCandidate(c, items, score, avgSim));
+        candidates.push(new ListCandidate(c, items, totalCount, score, avgSim));
       }
       candidates.sort((a, b) => b.score - a.score);
       return candidates[0] || null;
@@ -134,221 +136,6 @@
         if (style.display === "none" || style.visibility === "hidden") return false;
         return true;
       });
-    }
-  }
-
-  /**
-   * ✅ Site-specific detector for imoti.net:
-   * - imoti.net listings contain anchors with href including "/obiava"
-   * - generic ListDetector can miss items due to nested structure / non-uniform direct children
-   * - This detector finds card roots around unique listing links
-   *
-   * IMPORTANT: Only used when hostname matches imoti.net, so imot.bg remains on generic path.
-   */
-  class ImotiNetListingDetector {
-    static isImotiNetHost() {
-      const h = (location.hostname || "").toLowerCase();
-      return h === "imoti.net" || h.endsWith(".imoti.net");
-    }
-
-    static _isVisible(el) {
-      if (!(el instanceof Element)) return false;
-      const r = el.getBoundingClientRect();
-      if (!r || r.width < 12 || r.height < 12) return false;
-      const s = window.getComputedStyle(el);
-      if (s.display === "none" || s.visibility === "hidden" || s.opacity === "0") return false;
-      return true;
-    }
-
-    static _normalizeListingUrl(href) {
-      try {
-        const u = new URL(href, location.href);
-        // Only keep origin + pathname to dedupe (strip query/hash)
-        let p = u.pathname || "";
-        // Normalize trailing slash
-        if (p.length > 1 && p.endsWith("/")) p = p.slice(0, -1);
-        return `${u.origin}${p}`;
-      } catch (_) {
-        return null;
-      }
-    }
-
-    static _looksLikeListingLink(a) {
-      if (!a || !a.href) return false;
-      try {
-        const u = new URL(a.href, location.href);
-        if (!(u.hostname === "imoti.net" || u.hostname.endsWith(".imoti.net"))) return false;
-        // Loose match: your console check was "/obiava"
-        if (!u.pathname || !u.pathname.includes("/obiava")) return false;
-        return true;
-      } catch (_) {
-        return false;
-      }
-    }
-
-    static _scoreCardRoot(el) {
-      if (!(el instanceof Element)) return -Infinity;
-      if (!this._isVisible(el)) return -Infinity;
-
-      const r = el.getBoundingClientRect();
-      // Filter out absurd sizes
-      if (r.width < 220 || r.height < 60 || r.height > 2200) return -Infinity;
-
-      const txt = DomText.visibleText(el, 600).toLowerCase();
-      const hasPriceSignal =
-        /\b(лв|eur|€)\b/.test(txt) || /\b\d{2,}\s*(лв|eur|€)\b/.test(txt) || /\bцена\b/.test(txt);
-
-      const imgCount = el.querySelectorAll("img").length;
-      const linkCount = el.querySelectorAll("a[href*='/obiava']").length;
-
-      // Prefer elements that look like listing cards: at least one listing link,
-      // some text, and optionally price/img
-      let score = 0;
-      score += Math.min(linkCount, 3) * 3;
-      score += Math.min(imgCount, 3) * 2;
-      if (hasPriceSignal) score += 4;
-      score += Math.min(txt.length / 200, 4);
-
-      // Penalize if it's clearly a big container (likely full list)
-      if (r.height > 1200) score -= 6;
-
-      return score;
-    }
-
-    static _findCardRootFromAnchor(a) {
-      // Try a few common semantic containers first
-      const direct =
-        a.closest("article") ||
-        a.closest("li") ||
-        a.closest("[role='listitem']") ||
-        a.closest(".offer, .offer-item, .item, .result, .listing, .card") ||
-        null;
-
-      // If that works, keep it
-      if (direct && this._scoreCardRoot(direct) > 0) return direct;
-
-      // Otherwise: walk up and pick the best-scoring ancestor
-      let cur = a;
-      let best = null;
-      let bestScore = -Infinity;
-
-      // Walk up a bounded number of levels to avoid reaching body/html
-      for (let i = 0; i < 12 && cur && cur.parentElement; i++) {
-        cur = cur.parentElement;
-
-        // Stop if we reached too high
-        const tag = cur.tagName?.toLowerCase();
-        if (tag === "body" || tag === "html") break;
-
-        const sc = this._scoreCardRoot(cur);
-        if (sc > bestScore) {
-          bestScore = sc;
-          best = cur;
-        }
-
-        // Early exit if we found something strongly card-like
-        if (bestScore >= 10) break;
-      }
-
-      return bestScore > 0 ? best : null;
-    }
-
-    static _commonAncestor(nodes) {
-      if (!nodes || !nodes.length) return null;
-      const first = nodes[0];
-      if (!first || !(first instanceof Element)) return null;
-
-      // Collect ancestors of first
-      const ancestors = [];
-      let cur = first;
-      for (let i = 0; i < 10 && cur; i++) {
-        ancestors.push(cur);
-        cur = cur.parentElement;
-      }
-
-      // Find the lowest ancestor that contains all nodes
-      for (const a of ancestors) {
-        let ok = true;
-        for (const n of nodes) {
-          if (!a.contains(n)) {
-            ok = false;
-            break;
-          }
-        }
-        if (ok) return a;
-      }
-      return first.parentElement || first;
-    }
-
-    static detect(maxItems = 80) {
-      // Gather listing anchors
-      const anchors = Array.from(document.querySelectorAll("a[href*='/obiava']"))
-        .filter((a) => a instanceof HTMLAnchorElement)
-        .filter((a) => this._looksLikeListingLink(a))
-        .filter((a) => this._isVisible(a));
-
-      if (anchors.length < 4) return null;
-
-      // Deduplicate by normalized listing URL (imoti.net often repeats links per card)
-      const byUrl = new Map();
-      for (const a of anchors) {
-        const norm = this._normalizeListingUrl(a.href);
-        if (!norm) continue;
-
-        // Keep the anchor with the biggest clickable area as representative
-        const prev = byUrl.get(norm);
-        if (!prev) {
-          byUrl.set(norm, a);
-          continue;
-        }
-        const r1 = prev.getBoundingClientRect();
-        const r2 = a.getBoundingClientRect();
-        const area1 = Math.max(0, r1.width) * Math.max(0, r1.height);
-        const area2 = Math.max(0, r2.width) * Math.max(0, r2.height);
-        if (area2 > area1) byUrl.set(norm, a);
-      }
-
-      const reps = Array.from(byUrl.values());
-      if (reps.length < 4) return null;
-
-      // Convert anchors to card roots
-      const roots = [];
-      for (const a of reps) {
-        const root = this._findCardRootFromAnchor(a);
-        if (root) roots.push(root);
-      }
-
-      // Deduplicate roots
-      const uniq = [];
-      const seen = new Set();
-      for (const r of roots) {
-        if (!r || seen.has(r)) continue;
-        seen.add(r);
-        uniq.push(r);
-      }
-
-      if (uniq.length < 4) return null;
-
-      const items = uniq.slice(0, Math.max(1, Math.min(maxItems, 200)));
-
-      // Compute avg structural similarity like ListDetector for consistent meta
-      let avgSim = 0;
-      try {
-        const fp0 = Fingerprint.fromElement(items[0]);
-        const sims = [];
-        for (let i = 1; i < Math.min(items.length, 12); i++) {
-          const fpi = Fingerprint.fromElement(items[i]);
-          sims.push(Fingerprint.cosineSimilarity(fp0.map, fpi.map));
-        }
-        avgSim = sims.length ? sims.reduce((a, b) => a + b, 0) / sims.length : 0.75;
-      } catch (_) {
-        avgSim = 0.75;
-      }
-
-      const container = this._commonAncestor(items) || items[0].parentElement || items[0];
-      const score = items.length * avgSim + 5; // basic boost; we already have strong signals
-
-      return new ListCandidate(container, items, score, avgSim);
     }
   }
 
@@ -508,55 +295,209 @@
   }
 
   class LoadMore {
+    static _isVisible(el) {
+      if (!(el instanceof Element)) return false;
+      const r = el.getBoundingClientRect();
+      if (!r || r.width < 10 || r.height < 10) return false;
+      const s = window.getComputedStyle(el);
+      if (s.display === "none" || s.visibility === "hidden" || s.opacity === "0") return false;
+      return true;
+    }
+
+    static _isDisabled(el) {
+      return !!(
+        el.hasAttribute("disabled") ||
+        el.getAttribute("aria-disabled") === "true" ||
+        el.getAttribute("disabled") === "true"
+      );
+    }
+
+    static _norm(s) {
+      return DomText.normalize(s).toLowerCase();
+    }
+
+    static _scoreLoadMore(el) {
+      const text = LoadMore._norm(el.textContent);
+      const aria = LoadMore._norm(el.getAttribute("aria-label"));
+      const title = LoadMore._norm(el.getAttribute("title"));
+      const cls = LoadMore._norm(el.className || "");
+      const id = LoadMore._norm(el.id || "");
+      const combined = `${text} ${aria} ${title} ${cls} ${id}`;
+
+      const positives = [
+        "load more",
+        "show more",
+        "see more",
+        "more results",
+        "load next",
+        "покажи още",
+        "покажи повече",
+        "виж още",
+        "зареди още",
+        "още",
+        "повече",
+      ];
+      const negatives = ["next", "следва", "следваща", "previous", "предиш", "page", "страница"]; // avoid pagination
+
+      let score = 0;
+      for (const p of positives) {
+        if (combined.includes(p)) score += p.length >= 5 ? 6 : 3;
+      }
+      for (const n of negatives) {
+        if (combined.includes(n)) score -= 5;
+      }
+
+      // Extra signals from common classnames / attributes
+      if (cls.includes("load") && cls.includes("more")) score += 6;
+      if (cls.includes("show") && cls.includes("more")) score += 5;
+      if (cls.includes("infinite")) score += 3;
+      if (cls.includes("btn") && cls.includes("more")) score += 3;
+
+      // Prefer controls that are lower on the page
+      const r = el.getBoundingClientRect();
+      const nearBottom = r.top > window.innerHeight * 0.35;
+      if (nearBottom) score += 2;
+
+      // Prefer actual buttons/anchors
+      const tag = el.tagName.toLowerCase();
+      if (tag === "button") score += 2;
+      if (tag === "a" && el.getAttribute("href")) score += 1;
+
+      return score;
+    }
+
+    static findLoadMoreControl(container) {
+      const roots = [];
+      if (container instanceof Element) roots.push(container);
+      if (container?.parentElement) roots.push(container.parentElement);
+      roots.push(document.body);
+
+      const selector = "button, a[href], [role='button'], input[type='button'], input[type='submit']";
+
+      let best = null;
+      let bestScore = 0;
+
+      for (const root of roots) {
+        const nodes = Array.from(root.querySelectorAll(selector)).slice(0, 400);
+        for (const el of nodes) {
+          if (!LoadMore._isVisible(el)) continue;
+          if (LoadMore._isDisabled(el)) continue;
+
+          // Avoid picking a button inside the extension UI or unrelated overlays
+          if (el.closest("#__imotiExtractorUi, [data-imoti-extractor-ui]")) continue;
+
+          const score = LoadMore._scoreLoadMore(el);
+          if (score > bestScore) {
+            bestScore = score;
+            best = el;
+          }
+        }
+
+        // If we already found a strong candidate near the container, stop early
+        if (best && bestScore >= 8) break;
+      }
+
+      return bestScore >= 6 ? best : null;
+    }
+
+    static async _humanClick(el) {
+      try {
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+      } catch (_) {}
+
+      // Give layout a moment
+      await new Promise((r) => setTimeout(r, 150));
+
+      // Try standard click
+      try {
+        el.click();
+        return;
+      } catch (_) {}
+
+      // Fallback: dispatch mouse events
+      try {
+        const rect = el.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const opts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy };
+        el.dispatchEvent(new MouseEvent("mouseover", opts));
+        el.dispatchEvent(new MouseEvent("mousedown", opts));
+        el.dispatchEvent(new MouseEvent("mouseup", opts));
+        el.dispatchEvent(new MouseEvent("click", opts));
+      } catch (_) {}
+    }
+
+    static async _waitForListGrowth(detector, prevCount, timeoutMs) {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const cand = detector.detect();
+        const count = cand?.totalCount ?? prevCount;
+        if (count > prevCount) return { grew: true, cand, count };
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      const cand = detector.detect();
+      const count = cand?.totalCount ?? prevCount;
+      return { grew: count > prevCount, cand, count };
+    }
+
     static async run(options = {}) {
-      const scrollSteps = Math.max(1, Math.min(200, Number(options.scrollSteps || 12)));
-      const idleCycles = Math.max(1, Math.min(10, Number(options.idleCycles || 2)));
-      const stepDelayMs = Math.max(200, Math.min(6000, Number(options.stepDelayMs || 800)));
+      // Keep UI naming for compatibility: scrollSteps = max actions
+      const maxActions = Math.max(1, Math.min(250, Number(options.scrollSteps || 12)));
+      const idleCycles = Math.max(1, Math.min(15, Number(options.idleCycles || 2)));
+      const stepDelayMs = Math.max(150, Math.min(8000, Number(options.stepDelayMs || 800)));
+      const growthTimeoutMs = Math.max(1000, Math.min(20000, Number(options.growthTimeoutMs || 8000)));
+      const clickLoadMore = options.clickLoadMore !== false;
 
       const detector = new ListDetector();
-      const cand = detector.detect();
-      const getCount = () => cand?.items?.length || 0;
 
-      let prevCount = getCount();
+      const state0 = detector.detect();
+      let prevCount = state0?.totalCount || 0;
       let idle = 0;
 
-      for (let i = 0; i < scrollSteps; i++) {
-        window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
+      for (let i = 0; i < maxActions; i++) {
+        const cand = detector.detect();
+        const container = cand?.container || null;
+
+        let acted = false;
+
+        // Prefer clicking explicit "Load more" if present
+        if (clickLoadMore && container) {
+          const btn = LoadMore.findLoadMoreControl(container);
+          if (btn) {
+            await LoadMore._humanClick(btn);
+            acted = true;
+          }
+        }
+
+        // Fallback: infinite scroll
+        if (!acted) {
+          window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
+          acted = true;
+        }
+
         await new Promise((r) => setTimeout(r, stepDelayMs));
 
-        const cand2 = detector.detect();
-        const count = cand2?.items?.length || prevCount;
-
-        if (count > prevCount) {
-          prevCount = count;
+        const after = await LoadMore._waitForListGrowth(detector, prevCount, growthTimeoutMs);
+        if (after.count > prevCount) {
+          prevCount = after.count;
           idle = 0;
         } else {
           idle += 1;
           if (idle >= idleCycles) break;
         }
       }
+
       return true;
     }
   }
 
   class ExtractionRunner {
     run() {
-      // ✅ Try imoti.net specialized detector first (only on imoti.net)
-      let cand = null;
-      if (ImotiNetListingDetector.isImotiNetHost()) {
-        cand = ImotiNetListingDetector.detect(80);
-      }
-
-      // Fallback: generic detection for all sites (incl. imot.bg)
-      if (!cand) {
-        const detector = new ListDetector();
-        cand = detector.detect();
-      }
-
+      const detector = new ListDetector();
+      const cand = detector.detect();
       if (!cand) {
         return { ok: false, error: "No repeating list detected. Scroll so items are rendered, then run again." };
       }
-
       const extractor = new ItemExtractor();
       const items = cand.items.map((el) => extractor.extractItem(el));
       const result = {
@@ -568,7 +509,8 @@
           avgStructuralSimilarity: cand.avgSim,
           containerTag: cand.container.tagName.toLowerCase(),
           containerPath: this._cssPath(cand.container),
-          siteDetector: ImotiNetListingDetector.isImotiNetHost() ? "imoti.net-specialized" : "generic",
+          totalDetectedItems: cand.totalCount ?? cand.items.length,
+          extractedItems: items.length,
         },
         items,
       };
@@ -618,16 +560,7 @@
       return runner.run();
     },
     // Optional: expose internals for debugging
-    _internals: {
-      DomText,
-      Fingerprint,
-      ListDetector,
-      ItemExtractor,
-      Navigation,
-      LoadMore,
-      ExtractionRunner,
-      ImotiNetListingDetector,
-    },
+    _internals: { DomText, Fingerprint, ListDetector, ItemExtractor, Navigation, LoadMore, ExtractionRunner },
   };
 
   // Keep existing if already present (don’t break other injections)

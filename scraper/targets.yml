@@ -2,8 +2,8 @@
 - name: "imotbg.net - sofia sale"
   url: "https://www.imoti.net/bg/obiavi/r/prodava/sofia/?sid=hSrJhL"  
   mode: "pagination"
-  max_pages: 2500
-  delay_ms: 1800
+  max_pages: 1000
+  delay_ms: 1200
 
 # Example for sites that need infinite scroll / load more
 - name: "UniqueEstates"

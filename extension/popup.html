@@ -27,7 +27,7 @@
         <div class="grid2">
           <label class="lbl">
             Max pages
-            <input id="maxPages" type="number" min="1" max="200" value="10" />
+            <input id="maxPages" type="number" min="1" max="1000" value="10" />
           </label>
           <label class="lbl">
             Delay (ms)
@@ -38,7 +38,10 @@
           <button id="btnBatch">Extract next pages</button>
           <button id="btnStop" class="danger" disabled>Stop</button>
         </div>
-        <div class="hint">Traverses the site’s normal “Next” page control and extracts each page. Stops when no next page is found or max pages is reached.</div>
+        <div class="hint">
+          Traverses the site’s normal “Next” page control and extracts each page.
+          Stops when no next page is found or max pages is reached.
+        </div>
       </div>
 
       <hr class="sep" />
