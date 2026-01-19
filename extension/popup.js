@@ -78,6 +78,28 @@ async function sendMessage(message) {
   });
 }
 
+async function openSidePanelForActiveTab() {
+  // Works in MV3 when sidePanel permission exists and manifest has side_panel.default_path
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) throw new Error("No active tab");
+
+    if (chrome.sidePanel?.open) {
+      await chrome.sidePanel.open({ tabId: tab.id });
+      window.close();
+      return;
+    }
+
+    // Fallback: ask background to open it (useful if popup context can't access API)
+    const resp = await sendMessage({ type: "OPEN_SIDEPANEL", tabId: tab.id });
+    if (!resp?.ok) throw new Error(resp?.error || "Failed to open side panel");
+    window.close();
+  } catch (e) {
+    setStatus("Side panel error");
+    alert(String(e?.message || e));
+  }
+}
+
 async function runSingleExtraction(autoSendOverride = null) {
   setStatus("Extracting…");
   $("btnExport").disabled = true;
@@ -265,4 +287,9 @@ $("btnSaveOverride").addEventListener("click", async () => {
 
 $("btnOptions").addEventListener("click", async () => {
   await chrome.runtime.openOptionsPage();
+});
+
+// NEW: Open Side Panel button
+$("btnOpenSidePanel")?.addEventListener("click", async () => {
+  await openSidePanelForActiveTab();
 });

@@ -1,4 +1,5 @@
 /* global chrome */
+
 const DEFAULTS = {
   endpoint: "http://localhost:8787/api/v1/extractions",
   apiKey: "dev-key-change-me",
@@ -26,7 +27,7 @@ function getActiveTab() {
 }
 
 async function ensureContentScript(tabId) {
-  // Inject content script on-demand (MV3)
+  // Inject content script on-demand (MV3). Safe to call repeatedly.
   await chrome.scripting.executeScript({
     target: { tabId },
     files: ["content.js"],
@@ -46,22 +47,6 @@ function sendToTab(tabId, message) {
 function getSettings() {
   return new Promise((resolve) => {
     chrome.storage.sync.get(DEFAULTS, (items) => resolve(items));
-  });
-}
-
-function getSiteOverrides() {
-  return new Promise((resolve) => {
-    chrome.storage.sync.get({ siteOverrides: {} }, (items) => resolve(items.siteOverrides || {}));
-  });
-}
-
-function setSiteOverrides(siteOverrides) {
-  return new Promise((resolve, reject) => {
-    chrome.storage.sync.set({ siteOverrides }, () => {
-      const err = chrome.runtime.lastError;
-      if (err) return reject(err);
-      resolve(true);
-    });
   });
 }
 
@@ -109,24 +94,43 @@ function makeUtf8Safe(obj) {
   );
 }
 
+// --- Site override storage ---------------------------------------------------
+
+function getSiteOverrides() {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get({ siteOverrides: {} }, (items) => resolve(items.siteOverrides || {}));
+  });
+}
+
+function setSiteOverrides(siteOverrides) {
+  return new Promise((resolve) => {
+    chrome.storage.sync.set({ siteOverrides }, () => resolve(true));
+  });
+}
+
+function broadcast(msg) {
+  try {
+    chrome.runtime.sendMessage(msg);
+  } catch (_) {
+    // ignore
+  }
+}
+
+// --- Extraction wrappers -----------------------------------------------------
+
 async function runExtraction(tabId) {
   await ensureContentScript(tabId);
-
-  // ✅ FIX: content.js expects RUN_EXTRACTION (not DETECT_AND_EXTRACT)
   const resp = await sendToTab(tabId, { type: "RUN_EXTRACTION" });
   if (!resp?.ok) throw new Error(resp?.error || "Content extraction failed");
-
   return makeUtf8Safe(resp.result);
 }
 
 async function runLoadMoreThenExtract(tabId, options) {
   await ensureContentScript(tabId);
 
-  // ✅ FIX: LOAD_MORE then RUN_EXTRACTION (content.js supports these)
   const lm = await sendToTab(tabId, { type: "LOAD_MORE", options });
   if (!lm?.ok) throw new Error(lm?.error || "Load more failed");
 
-  // Give it a beat to render new items
   await delay(Math.max(200, Math.min(4000, Number(options?.afterLoadDelayMs || 800))));
 
   const resp = await sendToTab(tabId, { type: "RUN_EXTRACTION" });
@@ -137,25 +141,8 @@ async function runLoadMoreThenExtract(tabId, options) {
 
 async function navigateNext(tabId) {
   await ensureContentScript(tabId);
-
-  // ✅ FIX: content.js expects NAVIGATE_NEXT_PAGE (not NAVIGATE_NEXT)
   const resp = await sendToTab(tabId, { type: "NAVIGATE_NEXT_PAGE" });
   return !!resp?.ok && !!resp?.didNavigate;
-}
-
-async function runOnboarding(tabId) {
-  await ensureContentScript(tabId);
-  const resp = await sendToTab(tabId, { type: "ONBOARD_SITE" });
-  if (!resp?.ok) throw new Error(resp?.error || "Onboarding failed in content script");
-  return resp.report;
-}
-
-async function saveSiteOverride(hostname, override) {
-  if (!hostname) throw new Error("Missing hostname");
-  const existing = await getSiteOverrides();
-  existing[hostname] = override || {};
-  await setSiteOverrides(existing);
-  return true;
 }
 
 async function batchExtractPagination(tabId, options) {
@@ -185,6 +172,8 @@ async function batchExtractPagination(tabId, options) {
   return { pagesDone, lastId, stopped: stopRequested };
 }
 
+// --- Main message router -----------------------------------------------------
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     if (msg?.type === "GET_TAB_INFO") {
@@ -194,7 +183,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return;
     }
 
-    // Popup can still send DETECT_AND_EXTRACT; background translates it correctly now
+    // Popup can still send DETECT_AND_EXTRACT; background translates it correctly
     if (msg?.type === "DETECT_AND_EXTRACT") {
       const tab = await getActiveTab();
       const result = await runExtraction(tab.id);
@@ -215,19 +204,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return;
     }
 
-    if (msg?.type === "ONBOARD_SITE") {
-      const tab = await getActiveTab();
-      const report = await runOnboarding(tab.id);
-      sendResponse({ ok: true, report });
-      return;
-    }
-
-    if (msg?.type === "SAVE_SITE_OVERRIDE") {
-      await saveSiteOverride(msg.hostname, msg.override);
-      sendResponse({ ok: true });
-      return;
-    }
-
     if (msg?.type === "BATCH_EXTRACT_PAGINATION") {
       const tab = await getActiveTab();
       const out = await batchExtractPagination(tab.id, msg.options || {});
@@ -237,6 +213,80 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     if (msg?.type === "STOP_BATCH") {
       stopRequested = true;
+      sendResponse({ ok: true });
+      return;
+    }
+
+    // --- Onboarding (checklist) ---------------------------------------------
+    if (msg?.type === "ONBOARD_SITE") {
+      const tab = await getActiveTab();
+      await ensureContentScript(tab.id);
+      const resp = await sendToTab(tab.id, { type: "ONBOARD_SITE" });
+      sendResponse(resp);
+      return;
+    }
+
+    // --- Picker (click-to-select) -------------------------------------------
+    if (msg?.type === "START_PICKER") {
+      const tab = await getActiveTab();
+      await ensureContentScript(tab.id);
+      const resp = await sendToTab(tab.id, { type: "START_PICKER" });
+      sendResponse(resp);
+      return;
+    }
+
+    if (msg?.type === "STOP_PICKER") {
+      const tab = await getActiveTab();
+      await ensureContentScript(tab.id);
+      const resp = await sendToTab(tab.id, { type: "STOP_PICKER" });
+      sendResponse(resp);
+      return;
+    }
+
+    // Sent from content.js (user clicked an element in pick-mode)
+    if (msg?.type === "PICKER_RESULT") {
+      broadcast({ type: "PICKER_RESULT", result: msg.result });
+      sendResponse({ ok: true });
+      return;
+    }
+
+    // --- Overrides storage ---------------------------------------------------
+    if (msg?.type === "SAVE_SITE_OVERRIDE") {
+      const hostname = String(msg.hostname || "").trim();
+      const override = msg.override || null;
+      if (!hostname) throw new Error("Missing hostname");
+      if (!override || typeof override !== "object") throw new Error("Missing override");
+
+      const all = await getSiteOverrides();
+      all[hostname] = { ...(all[hostname] || {}), ...override, updatedAt: new Date().toISOString() };
+      await setSiteOverrides(all);
+      sendResponse({ ok: true, hostname, override: all[hostname] });
+      return;
+    }
+
+    if (msg?.type === "GET_SITE_OVERRIDE") {
+      const hostname = String(msg.hostname || "").trim();
+      const all = await getSiteOverrides();
+      sendResponse({ ok: true, hostname, override: all[hostname] || null });
+      return;
+    }
+
+    // Optional helpers
+    if (msg?.type === "CHECK_HEALTH") {
+      const settings = await getSettings();
+      const base = (settings.endpoint || "").replace(/\/api\/v1\/extractions\s*$/i, "");
+      const url = `${base}/health`;
+      const res = await fetch(url);
+      const text = await res.text().catch(() => "");
+      sendResponse({ ok: res.ok, text: text || res.statusText });
+      return;
+    }
+
+    if (msg?.type === "OPEN_DOCS") {
+      const settings = await getSettings();
+      const base = (settings.endpoint || "").replace(/\/api\/v1\/extractions\s*$/i, "");
+      const url = `${base}/docs`;
+      chrome.tabs.create({ url });
       sendResponse({ ok: true });
       return;
     }

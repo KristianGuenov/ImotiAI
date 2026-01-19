@@ -1,3 +1,8 @@
+- name: "imotbg.info - sofia sale"
+  url: "https://imoti.info/prodazhbi?bounds=W3sibGF0Ijo0Mi4zMTI0NDMzMDc2Njk0MSwibG5nIjoyNC4zOTE1MzAxNTEzNjcyMDN9LHsibGF0Ijo0My4wNDUzOTUxOTg2OTQ0MiwibG5nIjoyNi4zNDg0Njk4NDg2MzI4Mjh9XQ%3D%3D&details=1"  
+  mode: "pagination"
+  max_pages: 1000
+  delay_ms: 1200
 
 - name: "imotbg.net - sofia sale"
   url: "https://www.imoti.net/bg/obiavi/r/prodava/sofia/?sid=hSrJhL"  

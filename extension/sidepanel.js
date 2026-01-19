@@ -1,20 +1,22 @@
 /* global chrome */
-let lastResult = null;
-let lastOnboard = null;
-let isRunningBatch = false;
+"use strict";
 
 const $ = (id) => document.getElementById(id);
 
-function setDot(id, kind) {
-  const el = $(id);
+let lastResult = null;
+let isRunningBatch = false;
+let lastOnboard = null;
+let picked = null;
+
+function setDot(dotId, kind) {
+  const el = $(dotId);
   if (!el) return;
-  el.classList.remove("ok", "err");
-  if (kind === "ok") el.classList.add("ok");
-  if (kind === "err") el.classList.add("err");
+  el.classList.remove("ok", "warn", "err");
+  el.classList.add(kind || "ok");
 }
 
 function setStatus(text, kind = "ok") {
-  $("statusText").textContent = text;
+  $("status").textContent = text;
   setDot("dot", kind);
 }
 
@@ -23,21 +25,17 @@ function setBatchStatus(text, kind = "ok") {
   setDot("dotBatch", kind);
 }
 
-function setLastId(id) {
-  $("lastId").textContent = id ? String(id) : "—";
+function setOnboardStatus(text, kind = "ok") {
+  const el = $("statusOnboard");
+  if (el) el.textContent = text;
+  setDot("dotOnboard", kind);
 }
 
-function setExtractionMeta(result) {
-  const meta = result?.meta || {};
-  $("profile").textContent = meta.siteProfileUsed || "—";
-  $("strategy").textContent = meta.strategyUsed || "—";
-  $("timing").textContent = typeof meta.timingMs === "number" ? `${meta.timingMs} ms` : "—";
-}
-
-function formatOnboarding(report) {
-  const checklist = report?.checklist || {};
-  const override = report?.recommendedOverride || {};
-  return JSON.stringify({ checklist, recommendedOverride: override, timingMs: report?.timingMs ?? null }, null, 2);
+function safeName(s) {
+  return String(s || "page")
+    .toLowerCase()
+    .replace(/[^a-z0-9\-_.]+/g, "_")
+    .slice(0, 64);
 }
 
 function downloadJson(obj, filename) {
@@ -50,18 +48,25 @@ function downloadJson(obj, filename) {
   URL.revokeObjectURL(url);
 }
 
-async function sendMessage(message) {
-  return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage(message, (resp) => {
-      const err = chrome.runtime.lastError;
-      if (err) return reject(err);
-      resolve(resp);
+function initTabs() {
+  const tabs = Array.from(document.querySelectorAll(".tab"));
+  const panels = Array.from(document.querySelectorAll(".panel"));
+  for (const t of tabs) {
+    t.addEventListener("click", () => {
+      tabs.forEach((x) => x.classList.remove("active"));
+      panels.forEach((p) => p.classList.remove("active"));
+      t.classList.add("active");
+      const id = `tab-${t.dataset.tab}`;
+      const panel = document.getElementById(id);
+      if (panel) panel.classList.add("active");
     });
-  });
+  }
 }
 
-function safeName(title) {
-  return (title || "extraction").replace(/[^a-z0-9\-_]+/gi, "_").slice(0, 60);
+async function sendMessage(msg) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(msg, (resp) => resolve(resp));
+  });
 }
 
 async function refreshTabInfo() {
@@ -72,174 +77,188 @@ async function refreshTabInfo() {
   }
 }
 
+function renderOnboardOut(obj) {
+  const out = $("onboardOut");
+  if (!out) return;
+  out.textContent = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
+}
+
+function renderPicked(p) {
+  picked = p;
+  if (!$("pickedSelector")) return;
+  $("pickedSelector").textContent = p?.selector || "—";
+  $("pickedPattern").textContent = p?.listingLinkPattern || "—";
+  $("pickedMatches").textContent = String(p?.matchCount ?? 0);
+  $("btnSaveOverride").disabled = !p?.selector;
+}
+
+async function doOnboard() {
+  setOnboardStatus("Running…", "warn");
+  renderOnboardOut("Running checklist…");
+
+  const resp = await sendMessage({ type: "ONBOARD_SITE" });
+  if (!resp?.ok) {
+    setOnboardStatus("Onboarding error", "err");
+    renderOnboardOut(resp);
+    return;
+  }
+
+  lastOnboard = resp.report || null;
+  setOnboardStatus("Checklist done", "ok");
+  renderOnboardOut(resp);
+}
+
+async function startPick() {
+  setOnboardStatus("Pick mode… click a card", "warn");
+  renderOnboardOut("Pick mode started. Click a listing card on the page…");
+
+  if ($("btnPick")) $("btnPick").disabled = true;
+  if ($("btnPickStop")) $("btnPickStop").disabled = false;
+
+  const resp = await sendMessage({ type: "START_PICKER" });
+  if (!resp?.ok) {
+    setOnboardStatus("Pick start failed", "err");
+    if ($("btnPick")) $("btnPick").disabled = false;
+    if ($("btnPickStop")) $("btnPickStop").disabled = true;
+    renderOnboardOut(resp);
+  }
+}
+
+async function stopPick() {
+  const resp = await sendMessage({ type: "STOP_PICKER" });
+  if (!resp?.ok) {
+    setOnboardStatus("Stop failed", "err");
+    renderOnboardOut(resp);
+    return;
+  }
+
+  setOnboardStatus("Pick stopped", "ok");
+  if ($("btnPick")) $("btnPick").disabled = false;
+  if ($("btnPickStop")) $("btnPickStop").disabled = true;
+}
+
+async function saveOverride() {
+  if (!picked?.selector) return;
+
+  // store minimal override: selectorCards + link pattern (if found)
+  const hostname = $("sitePill").textContent || "";
+  const override = {
+    selectorCards: [picked.selector],
+    listingLinkPattern: picked.listingLinkPattern || null,
+  };
+
+  setOnboardStatus("Saving override…", "warn");
+  const resp = await sendMessage({ type: "SAVE_SITE_OVERRIDE", hostname, override });
+  if (!resp?.ok) {
+    setOnboardStatus("Save failed", "err");
+    renderOnboardOut(resp);
+    return;
+  }
+
+  setOnboardStatus("Override saved", "ok");
+  renderOnboardOut(resp);
+}
+
 async function doExtract() {
-  setStatus("Extracting…", "ok");
-  $("btnSend").disabled = true;
-  $("btnExport").disabled = true;
-  $("preview").textContent = "Working…";
-  lastResult = null;
-  setExtractionMeta(null);
-
+  setStatus("Extracting…", "warn");
   const resp = await sendMessage({ type: "DETECT_AND_EXTRACT" });
-  if (!resp?.ok) throw new Error(resp?.error || "Extraction failed");
-
+  if (!resp?.ok) {
+    setStatus("Extraction failed", "err");
+    $("preview").textContent = JSON.stringify(resp, null, 2);
+    return;
+  }
   lastResult = resp.result;
-  $("count").textContent = String((lastResult.items || []).length);
-  setExtractionMeta(lastResult);
-  $("preview").textContent = JSON.stringify(
-    {
-      pageTitle: lastResult.pageTitle,
-      sourceUrl: lastResult.sourceUrl,
-      extractedAt: lastResult.extractedAt,
-      itemCount: lastResult.items?.length || 0,
-      sampleItems: (lastResult.items || []).slice(0, 5),
-    },
-    null,
-    2
-  );
-
-  $("btnSend").disabled = false;
-  $("btnExport").disabled = false;
-  setStatus("Ready", "ok");
+  setStatus(`OK: ${resp.result?.items?.length || 0} items`, "ok");
+  $("preview").textContent = JSON.stringify(resp.result, null, 2);
 }
 
 async function doSend() {
-  if (!lastResult) return;
-  setStatus("Sending…", "ok");
+  if (!lastResult) {
+    setStatus("No result to send", "warn");
+    return;
+  }
+  setStatus("Sending…", "warn");
   const resp = await sendMessage({ type: "SEND_TO_BACKEND", payload: lastResult });
-  if (!resp?.ok) throw new Error(resp?.error || "Send failed");
-  setLastId(resp.id);
+  if (!resp?.ok) {
+    setStatus("Send failed", "err");
+    return;
+  }
   setStatus(`Sent (id: ${resp.id})`, "ok");
+}
+
+async function doLoadMore() {
+  setBatchStatus("Load more…", "warn");
+
+  const scrollSteps = Number($("scrollSteps").value || 12);
+  const idleCycles = Number($("idleCycles").value || 2);
+
+  const resp = await sendMessage({
+    type: "LOAD_MORE_THEN_EXTRACT",
+    options: { scrollSteps, idleCycles, stepDelayMs: 800, afterLoadDelayMs: 800 },
+  });
+
+  if (!resp?.ok) {
+    setBatchStatus("Load more failed", "err");
+    $("batchLog").textContent = JSON.stringify(resp, null, 2);
+    return;
+  }
+
+  lastResult = resp.result;
+  setBatchStatus(`OK: ${resp.result?.items?.length || 0} items`, "ok");
+  $("batchLog").textContent = JSON.stringify(resp.result, null, 2);
 }
 
 async function doBatchPagination() {
   if (isRunningBatch) return;
   isRunningBatch = true;
 
+  $("btnBatch").disabled = true;
   $("btnStop").disabled = false;
-  setBatchStatus("Running…", "ok");
-  $("batchLog").textContent = "Starting…";
 
-  const maxPages = Math.max(1, Math.min(200, parseInt($("maxPages").value || "25", 10)));
-  const delayMs = Math.max(0, Math.min(20000, parseInt($("delayMs").value || "2500", 10)));
+  const maxPages = Number($("maxPages").value || 25);
+  const delayMs = Number($("delayMs").value || 2500);
 
-  try {
-    const resp = await sendMessage({ type: "BATCH_EXTRACT_PAGINATION", options: { maxPages, delayMs } });
-    if (!resp?.ok) throw new Error(resp?.error || "Batch failed");
+  setBatchStatus("Running…", "warn");
+  $("batchLog").textContent = "";
+
+  const resp = await sendMessage({
+    type: "BATCH_EXTRACT_PAGINATION",
+    options: { maxPages, delayMs },
+  });
+
+  if (!resp?.ok) {
+    setBatchStatus("Batch failed", "err");
     $("batchLog").textContent = JSON.stringify(resp, null, 2);
-    if (resp.lastId) setLastId(resp.lastId);
-    setBatchStatus(`Done (${resp.pagesDone} pages)`, "ok");
-  } catch (e) {
-    $("batchLog").textContent = String(e?.message || e);
-    setBatchStatus("Batch error", "err");
-  } finally {
-    isRunningBatch = false;
-    $("btnStop").disabled = true;
+  } else {
+    const msg = `Done. pagesDone=${resp.pagesDone}, lastId=${resp.lastId}, stopped=${resp.stopped}`;
+    setBatchStatus("Done", "ok");
+    $("batchLog").textContent = msg;
   }
+
+  isRunningBatch = false;
+  $("btnBatch").disabled = false;
+  $("btnStop").disabled = true;
 }
 
 async function doStopBatch() {
-  await sendMessage({ type: "STOP_BATCH" });
-  setBatchStatus("Stopping…", "ok");
-}
-
-async function doLoadMore() {
-  setBatchStatus("Loading more…", "ok");
-  const scrollSteps = Math.max(1, Math.min(200, parseInt($("scrollSteps").value || "16", 10)));
-  const idleCycles = Math.max(1, Math.min(10, parseInt($("idleCycles").value || "2", 10)));
-
-  try {
-    const resp = await sendMessage({ type: "LOAD_MORE_THEN_EXTRACT", options: { scrollSteps, idleCycles } });
-    if (!resp?.ok) throw new Error(resp?.error || "Load more failed");
-
-    lastResult = resp.result;
-    $("count").textContent = String((lastResult.items || []).length);
-    setExtractionMeta(lastResult);
-    $("preview").textContent = JSON.stringify(
-      {
-        pageTitle: lastResult.pageTitle,
-        sourceUrl: lastResult.sourceUrl,
-        extractedAt: lastResult.extractedAt,
-        itemCount: lastResult.items?.length || 0,
-        sampleItems: (lastResult.items || []).slice(0, 5),
-      },
-      null,
-      2
-    );
-
-    $("btnSend").disabled = false;
-    $("btnExport").disabled = false;
-
-    setBatchStatus("Ready", "ok");
-    setStatus("Ready", "ok");
-  } catch (e) {
-    $("batchLog").textContent = String(e?.message || e);
-    setBatchStatus("Error", "err");
-  }
-}
-
-async function doOnboard() {
-  setStatus("Onboarding…", "ok");
-  $("btnCopyOverride").disabled = true;
-  $("btnSaveOverride").disabled = true;
-  lastOnboard = null;
-
-  const resp = await sendMessage({ type: "ONBOARD_SITE" });
-  if (!resp?.ok) throw new Error(resp?.error || "Onboarding failed");
-
-  lastOnboard = resp.report;
-  $("onboardOut").textContent = formatOnboarding(lastOnboard);
-
-  const hostname = lastOnboard?.checklist?.hostname;
-  const overrideForHost = hostname ? lastOnboard?.recommendedOverride?.[hostname] : null;
-  $("btnCopyOverride").disabled = !overrideForHost;
-  $("btnSaveOverride").disabled = !overrideForHost;
-
-  setStatus("Onboarding ready", "ok");
+  const resp = await sendMessage({ type: "STOP_BATCH" });
+  if (resp?.ok) setBatchStatus("Stopping…", "warn");
 }
 
 async function checkHealth() {
-  // uses the configured endpoint in options; strip /api/v1/extractions
-  const settings = await new Promise((resolve) => {
-    chrome.storage.sync.get({ endpoint: "" }, (items) => resolve(items));
-  });
-
-  const base = (settings.endpoint || "").replace(/\/api\/v1\/extractions\s*$/i, "");
-  if (!base) {
-    $("healthOut").textContent = "Endpoint not set in Options.";
+  const resp = await sendMessage({ type: "CHECK_HEALTH" });
+  const out = $("healthOut");
+  if (!out) return;
+  if (!resp?.ok) {
+    out.textContent = resp?.error || "Health check failed";
     return;
   }
-
-  try {
-    const res = await fetch(base + "/health");
-    const text = await res.text();
-    $("healthOut").textContent = res.ok ? `OK: ${text}` : `Error ${res.status}: ${text}`;
-  } catch (e) {
-    $("healthOut").textContent = String(e?.message || e);
-  }
+  out.textContent = resp?.text || "OK";
 }
 
 async function openDocs() {
-  const settings = await new Promise((resolve) => {
-    chrome.storage.sync.get({ endpoint: "" }, (items) => resolve(items));
-  });
-
- const base = (settings.endpoint || "").replace(/\/api\/v1\/extractions\s*$/i, "");
-  if (!base) return;
-  chrome.tabs.create({ url: base + "/docs" });
-}
-
-function initTabs() {
-  const tabs = Array.from(document.querySelectorAll(".tab"));
-  tabs.forEach((t) => {
-    t.addEventListener("click", () => {
-      tabs.forEach((x) => x.classList.remove("active"));
-      t.classList.add("active");
-      const key = t.getAttribute("data-tab");
-      document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
-      document.getElementById("tab-" + key).classList.add("active");
-    });
-  });
+  const resp = await sendMessage({ type: "OPEN_DOCS" });
+  if (!resp?.ok) setStatus("Open docs failed", "err");
 }
 
 function wire() {
@@ -247,13 +266,21 @@ function wire() {
   $("btnRefresh").addEventListener("click", refreshTabInfo);
 
   $("btnExtract").addEventListener("click", async () => {
-    try { await refreshTabInfo(); await doExtract(); }
-    catch (e) { setStatus("Error", "err"); $("preview").textContent = String(e?.message || e); }
+    try {
+      await refreshTabInfo();
+      await doExtract();
+    } catch (e) {
+      setStatus("Error", "err");
+      $("preview").textContent = String(e?.message || e);
+    }
   });
 
   $("btnSend").addEventListener("click", async () => {
-    try { await doSend(); }
-    catch (e) { setStatus("Send error", "err"); }
+    try {
+      await doSend();
+    } catch (e) {
+      setStatus("Send error", "err");
+    }
   });
 
   $("btnExport").addEventListener("click", () => {
@@ -265,52 +292,26 @@ function wire() {
   $("btnStop").addEventListener("click", doStopBatch);
   $("btnLoadMore").addEventListener("click", doLoadMore);
 
-  // Onboarding / tuning
-  $("btnOnboard").addEventListener("click", async () => {
-    try {
-      await refreshTabInfo();
-      await doOnboard();
-    } catch (e) {
-      $("onboardOut").textContent = String(e?.message || e);
-      setStatus("Onboarding error", "err");
-    }
-  });
-
-  $("btnCopyOverride").addEventListener("click", async () => {
-    try {
-      const hostname = lastOnboard?.checklist?.hostname;
-      const overrideForHost = hostname ? lastOnboard?.recommendedOverride?.[hostname] : null;
-      if (!overrideForHost) return;
-      await navigator.clipboard.writeText(JSON.stringify({ [hostname]: overrideForHost }, null, 2));
-      setStatus("Override copied", "ok");
-    } catch (e) {
-      setStatus("Copy failed", "err");
-    }
-  });
-
-  $("btnSaveOverride").addEventListener("click", async () => {
-    try {
-      const hostname = lastOnboard?.checklist?.hostname;
-      const overrideForHost = hostname ? lastOnboard?.recommendedOverride?.[hostname] : null;
-      if (!hostname || !overrideForHost) return;
-      await sendMessage({ type: "SAVE_SITE_OVERRIDE", hostname, override: overrideForHost });
-      setStatus("Override saved", "ok");
-    } catch (e) {
-      setStatus("Save failed", "err");
-    }
-  });
-
-  $("btnClearOnboard").addEventListener("click", () => {
-    lastOnboard = null;
-    $("onboardOut").textContent = "Run “Run checklist” on a listings page to generate a suggested override.";
-    $("btnCopyOverride").disabled = true;
-    $("btnSaveOverride").disabled = true;
-    setStatus("Cleared", "ok");
-  });
-
   $("btnHealth").addEventListener("click", checkHealth);
   $("btnOpenDocs").addEventListener("click", openDocs);
+
+  // Onboarding
+  if ($("btnOnboard")) $("btnOnboard").addEventListener("click", doOnboard);
+  if ($("btnPick")) $("btnPick").addEventListener("click", startPick);
+  if ($("btnPickStop")) $("btnPickStop").addEventListener("click", stopPick);
+  if ($("btnSaveOverride")) $("btnSaveOverride").addEventListener("click", saveOverride);
 }
+
+// Receive picker results broadcast by background.js
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.type === "PICKER_RESULT") {
+    renderPicked(msg.result);
+    setOnboardStatus("Picked", "ok");
+    if ($("btnPick")) $("btnPick").disabled = false;
+    if ($("btnPickStop")) $("btnPickStop").disabled = true;
+    renderOnboardOut({ pickerResult: msg.result });
+  }
+});
 
 (async () => {
   initTabs();
@@ -318,4 +319,5 @@ function wire() {
   await refreshTabInfo();
   setStatus("Idle", "ok");
   setBatchStatus("Ready", "ok");
+  setOnboardStatus("Ready", "ok");
 })();

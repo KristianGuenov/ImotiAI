@@ -38,7 +38,10 @@
           <button id="btnBatch">Extract next pages</button>
           <button id="btnStop" class="danger" disabled>Stop</button>
         </div>
-        <div class="hint">Traverses the site’s normal “Next” page control and extracts each page. Stops when no next page is found or max pages is reached.</div>
+        <div class="hint">
+          Traverses the site’s normal “Next” page control and extracts each page. Stops when no next page is found or
+          max pages is reached.
+        </div>
       </div>
 
       <hr class="sep" />
@@ -70,6 +73,12 @@
           <button id="btnCopyOverride" disabled>Copy override JSON</button>
           <button id="btnSaveOverride" disabled>Save override</button>
         </div>
+
+        <!-- NEW: open side panel from popup -->
+        <div class="row">
+          <button id="btnOpenSidePanel" class="link">Open Side Panel</button>
+        </div>
+
         <div class="hint">Generates a suggested per-site profile override and basic diagnostics for new sites.</div>
       </div>
 
@@ -92,9 +101,7 @@
     </div>
 
     <footer>
-      <p class="legal">
-        Use only on pages you are authorized to access and extract.
-      </p>
+      <p class="legal">Use only on pages you are authorized to access and extract.</p>
     </footer>
 
     <script src="popup.js"></script>

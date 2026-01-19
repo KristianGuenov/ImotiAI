@@ -2,193 +2,226 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ImotiAI Extractor</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Extractor</title>
     <link rel="stylesheet" href="sidepanel.css" />
   </head>
   <body>
-    <header class="topbar">
-      <div class="brand">
-        <img class="logo" src="assets/icon-48.png" alt="ImotiAI" />
-        <div>
-          <div class="name">ImotiAI Extractor</div>
-          <div class="sub">Smart extraction for authorized pages</div>
+    <div class="wrap">
+      <header class="top">
+        <div class="brand">
+          <div class="logo">LW</div>
+          <div>
+            <div class="title">Legal Web Extractor</div>
+            <div class="sub" id="sitePill">—</div>
+          </div>
         </div>
-      </div>
 
-      <div class="right">
-        <div class="pill" id="sitePill">—</div>
-        <button class="iconBtn" id="btnOptions" title="Options">⚙</button>
-      </div>
-    </header>
+        <div class="actions">
+          <button id="btnRefresh" class="ghost">Refresh</button>
+          <button id="btnOptions" class="ghost">Options</button>
+        </div>
+      </header>
 
-    <div class="layout">
-      <nav class="rail">
-        <button class="tab active" data-tab="extract">Extract</button>
-        <button class="tab" data-tab="batch">Batch</button>
-        <button class="tab" data-tab="data">Data</button>
-      </nav>
+      <main class="main">
+        <nav class="rail">
+          <button class="tab active" data-tab="extract">Extract</button>
+          <button class="tab" data-tab="batch">Batch</button>
+          <button class="tab" data-tab="onboard">Onboard</button>
+          <button class="tab" data-tab="data">Data</button>
+        </nav>
 
-      <main class="content">
-        <!-- EXTRACT -->
-        <section class="panel active" id="tab-extract">
-          <div class="hero">
-            <div>
-              <div class="heroTitle">Extract</div>
-              <div class="heroSub">Extract the best repeating list from the current page.</div>
+        <section class="content">
+          <!-- EXTRACT -->
+          <section class="panel active" id="tab-extract">
+            <div class="hero">
+              <div>
+                <div class="heroTitle">Extract</div>
+                <div class="heroSub">Detect listing cards and extract links/text/images.</div>
+              </div>
+              <div class="status">
+                <span class="dot ok" id="dot"></span>
+                <span id="status">Idle</span>
+              </div>
             </div>
-            <div class="status">
-              <span class="dot ok" id="dot"></span>
-              <span id="statusText">Idle</span>
-            </div>
-          </div>
 
-          <div class="grid">
+            <div class="grid">
+              <div class="card">
+                <div class="cardTitle">Page</div>
+                <div class="kv">
+                  <div class="k">URL</div>
+                  <div class="v mono" id="url">—</div>
+                </div>
+
+                <div class="btnRow">
+                  <button class="primary" id="btnExtract">Extract</button>
+                  <button id="btnExport">Export JSON</button>
+                </div>
+
+                <div class="btnRow">
+                  <button class="primary" id="btnSend">Send to backend</button>
+                </div>
+
+                <div class="hint">
+                  Uses your selected strategy/profile overrides per-host when available.
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="cardTitle">Preview</div>
+                <pre class="preview" id="preview">Click Extract to see the parsed output.</pre>
+              </div>
+            </div>
+          </section>
+
+          <!-- BATCH -->
+          <section class="panel" id="tab-batch">
+            <div class="hero">
+              <div>
+                <div class="heroTitle">Batch pagination</div>
+                <div class="heroSub">Extract current page, send to backend, then navigate “Next”.</div>
+              </div>
+              <div class="status">
+                <span class="dot ok" id="dotBatch"></span>
+                <span id="statusBatch">Ready</span>
+              </div>
+            </div>
+
+            <div class="grid">
+              <div class="card">
+                <div class="cardTitle">Batch controls</div>
+
+                <div class="row">
+                  <label class="lbl">
+                    Max pages
+                    <input id="maxPages" type="number" min="1" max="200" value="25" />
+                  </label>
+                  <label class="lbl">
+                    Delay (ms)
+                    <input id="delayMs" type="number" min="0" max="20000" value="2500" />
+                  </label>
+                </div>
+
+                <div class="btnRow">
+                  <button class="primary" id="btnBatch">Start batch</button>
+                  <button class="danger" id="btnStop" disabled>Stop</button>
+                </div>
+
+                <div class="hint">
+                  Stops when no Next control is found, or max pages reached.
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="cardTitle">Load more mode</div>
+
+                <div class="row">
+                  <label class="lbl">
+                    Scroll steps
+                    <input id="scrollSteps" type="number" min="1" max="200" value="12" />
+                  </label>
+                  <label class="lbl">
+                    Idle cycles
+                    <input id="idleCycles" type="number" min="1" max="10" value="2" />
+                  </label>
+                </div>
+
+                <div class="btnRow">
+                  <button class="primary" id="btnLoadMore">Load more + extract</button>
+                </div>
+
+                <div class="hint">
+                  Scrolls down to trigger lazy loading, then extracts.
+                </div>
+              </div>
+            </div>
+
             <div class="card">
-              <div class="cardTitle">Actions</div>
+              <div class="cardTitle">Batch log</div>
+              <pre class="preview" id="batchLog">Start a batch to see progress.</pre>
+            </div>
+          </section>
 
-              <div class="btnRow">
-                <button class="primary" id="btnExtract">Extract</button>
-                <button id="btnSend" disabled>Send</button>
+          <!-- ONBOARD -->
+          <section class="panel" id="tab-onboard">
+            <div class="hero">
+              <div>
+                <div class="heroTitle">Site onboarding</div>
+                <div class="heroSub">Tune extraction for a new site without breaking existing sites.</div>
+              </div>
+              <div class="status">
+                <span class="dot ok" id="dotOnboard"></span>
+                <span id="statusOnboard">Ready</span>
+              </div>
+            </div>
+
+            <div class="grid">
+              <div class="card">
+                <div class="cardTitle">Checklist</div>
+                <div class="btnRow">
+                  <button class="primary" id="btnOnboard">Run checklist</button>
+                </div>
+                <div class="hint">
+                  Runs DOM checks (listing links, candidate card roots, pagination hints) and suggests an override.
+                </div>
               </div>
 
-              <div class="btnRow">
-                <button id="btnExport" disabled>Export JSON</button>
-                <button class="ghost" id="btnRefresh">Refresh URL</button>
-              </div>
-
-              <div class="meta">
-                <div><strong>URL:</strong> <span id="url">—</span></div>
-                <div><strong>Items:</strong> <span id="count">0</span></div>
-                <div><strong>Profile:</strong> <span id="profile">—</span></div>
-                <div><strong>Strategy:</strong> <span id="strategy">—</span></div>
-                <div><strong>Timing:</strong> <span id="timing">—</span></div>
-                <div><strong>Last run id:</strong> <span id="lastId">—</span></div>
+              <div class="card">
+                <div class="cardTitle">Click-to-select card container</div>
+                <div class="btnRow">
+                  <button class="primary" id="btnPick">Pick container</button>
+                  <button class="danger" id="btnPickStop" disabled>Stop</button>
+                </div>
+                <div class="meta">
+                  <div><strong>Picked selector:</strong> <span id="pickedSelector">—</span></div>
+                  <div><strong>Link pattern:</strong> <span id="pickedPattern">—</span></div>
+                  <div><strong>Matches:</strong> <span id="pickedMatches">0</span></div>
+                </div>
+                <div class="btnRow">
+                  <button id="btnSaveOverride" disabled>Save override for this host</button>
+                </div>
+                <div class="hint">
+                  Click a listing “card” on the page. We’ll infer a reusable CSS selector (e.g. <code>div.item</code> / <code>li.result</code>) and store it per-host.
+                </div>
               </div>
             </div>
 
             <div class="card">
-              <div class="cardTitle">Preview</div>
-              <pre class="preview" id="preview">Click “Extract” to capture items.</pre>
+              <div class="cardTitle">Onboarding output</div>
+              <pre class="preview" id="onboardOut">Run the checklist, or pick a container, to see debug output.</pre>
+            </div>
+          </section>
+
+          <!-- DATA -->
+          <section class="panel" id="tab-data">
+            <div class="hero">
+              <div>
+                <div class="heroTitle">Backend</div>
+                <div class="heroSub">Health check and quick links.</div>
+              </div>
             </div>
 
-            <div class="card">
-              <div class="cardTitle">Onboarding (tuning helper)</div>
-              <div class="btnRow">
-                <button class="primary" id="btnOnboard">Run checklist</button>
-                <button id="btnCopyOverride" disabled>Copy override JSON</button>
+            <div class="grid">
+              <div class="card">
+                <div class="cardTitle">Checks</div>
+                <div class="btnRow">
+                  <button class="primary" id="btnHealth">Check /health</button>
+                  <button class="ghost" id="btnOpenDocs">Open /docs</button>
+                </div>
+                <div class="hint" id="healthOut">Not checked yet.</div>
               </div>
-              <div class="btnRow">
-                <button id="btnSaveOverride" disabled>Save override</button>
-                <button class="ghost" id="btnClearOnboard">Clear</button>
+
+              <div class="card">
+                <div class="cardTitle">Notes</div>
+                <ul class="bullets">
+                  <li>Batch uses your existing API endpoints and DB.</li>
+                  <li>If you changed ports, update them in Options.</li>
+                  <li>Do not run <code>docker compose down -v</code> if you want to keep data.</li>
+                </ul>
               </div>
-              <div class="hint">For new sites, generates diagnostics and a suggested per-host override.</div>
-              <pre class="preview" id="onboardOut">Run “Run checklist” on a listings page to generate a suggested override.</pre>
             </div>
-          </div>
+          </section>
         </section>
-
-        <!-- BATCH -->
-        <section class="panel" id="tab-batch">
-          <div class="hero">
-            <div>
-              <div class="heroTitle">Batch</div>
-              <div class="heroSub">Pagination and “Load more” extraction.</div>
-            </div>
-            <div class="status">
-              <span class="dot ok" id="dotBatch"></span>
-              <span id="statusBatch">Ready</span>
-            </div>
-          </div>
-
-          <div class="grid">
-            <div class="card">
-              <div class="cardTitle">Pagination</div>
-
-              <div class="row2">
-                <label class="lbl">
-                  Max pages
-                  <input id="maxPages" type="number" min="1" max="200" value="25" />
-                </label>
-                <label class="lbl">
-                  Delay (ms)
-                  <input id="delayMs" type="number" min="0" max="20000" value="2500" />
-                </label>
-              </div>
-
-              <div class="btnRow">
-                <button class="primary" id="btnBatch">Run pagination</button>
-                <button class="danger" id="btnStop" disabled>Stop</button>
-              </div>
-
-              <div class="hint">
-                Uses the page’s “Next” control. Stops when no next page is detected.
-              </div>
-            </div>
-
-            <div class="card">
-              <div class="cardTitle">Load more / Infinite scroll</div>
-
-              <div class="row2">
-                <label class="lbl">
-                  Scroll steps
-                  <input id="scrollSteps" type="number" min="1" max="200" value="16" />
-                </label>
-                <label class="lbl">
-                  Idle cycles
-                  <input id="idleCycles" type="number" min="1" max="10" value="2" />
-                </label>
-              </div>
-
-              <div class="btnRow">
-                <button class="primary" id="btnLoadMore">Load more + extract</button>
-              </div>
-
-              <div class="hint">
-                Scrolls down to trigger lazy loading, then extracts.
-              </div>
-            </div>
-          </div>
-
-          <div class="card">
-            <div class="cardTitle">Batch log</div>
-            <pre class="preview" id="batchLog">Start a batch to see progress.</pre>
-          </div>
-        </section>
-
-        <!-- DATA -->
-        <section class="panel" id="tab-data">
-          <div class="hero">
-            <div>
-              <div class="heroTitle">Backend</div>
-              <div class="heroSub">Health check and quick links.</div>
-            </div>
-          </div>
-
-          <div class="grid">
-            <div class="card">
-              <div class="cardTitle">Checks</div>
-              <div class="btnRow">
-                <button class="primary" id="btnHealth">Check /health</button>
-                <button class="ghost" id="btnOpenDocs">Open /docs</button>
-              </div>
-              <div class="hint" id="healthOut">Not checked yet.</div>
-            </div>
-
-            <div class="card">
-              <div class="cardTitle">Notes</div>
-              <ul class="bullets">
-                <li>Batch uses your existing API endpoints and DB.</li>
-                <li>If you changed ports, update them in Options.</li>
-                <li>Do not run <code>docker compose down -v</code> if you want to keep data.</li>
-              </ul>
-            </div>
-          </div>
-        </section>
-
-        <footer class="foot">
-          Use only on pages you are authorized to access and extract.
-        </footer>
       </main>
     </div>
 

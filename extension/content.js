@@ -2,9 +2,9 @@
 (function () {
   "use strict";
 
-  // ✅ Guard: avoid re-registering listeners if injected multiple times
-  if (window.__realEstateExtractorInjected) return;
-  window.__realEstateExtractorInjected = true;
+  // ---------------------------------------------------------------------------
+  // Utilities
+  // ---------------------------------------------------------------------------
 
   class DomText {
     static normalize(s) {
@@ -44,6 +44,150 @@
       return DomText.safeTruncate(DomText.normalize(out), maxLen);
     }
   }
+
+  class SiteOverrides {
+    static getAll() {
+      return new Promise((resolve) => {
+        chrome.storage.sync.get({ siteOverrides: {} }, (items) => resolve(items.siteOverrides || {}));
+      });
+    }
+    static async getForHost(hostname) {
+      const all = await SiteOverrides.getAll();
+      return all[hostname] || null;
+    }
+  }
+
+  function nowMs() {
+    return (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+  }
+
+  function tryUrl(href) {
+    try {
+      return new URL(href, location.href);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function isProbablyFooterOrNav(a) {
+    const el = a instanceof Element ? a : null;
+    if (!el) return false;
+    if (el.closest("footer")) return true;
+    if (el.closest("nav")) return true;
+    if (el.closest("[role='navigation']")) return true;
+    return false;
+  }
+
+  function chooseListingLinkPatternFromPage() {
+    const patterns = [
+      "/obiava/",
+      "/offer/",
+      "/listing/",
+      "/ad/",
+      "/property/",
+      "/imot/",
+      "/annonce/",
+      "/objava/",
+    ];
+
+    const anchors = Array.from(document.querySelectorAll("a[href]"))
+      .filter((a) => a.href && !a.href.endsWith("#") && !isProbablyFooterOrNav(a));
+
+    const counts = {};
+    for (const p of patterns) counts[p] = 0;
+
+    for (const a of anchors) {
+      const u = tryUrl(a.href);
+      const path = (u?.pathname || "").toLowerCase();
+      for (const p of patterns) {
+        if (path.includes(p.toLowerCase())) counts[p] += 1;
+      }
+    }
+
+    let best = null;
+    let bestCount = 0;
+    for (const p of patterns) {
+      if (counts[p] > bestCount) {
+        bestCount = counts[p];
+        best = p;
+      }
+    }
+    return bestCount >= 5 ? best : null;
+  }
+
+  function cssEscape(s) {
+    if (window.CSS && CSS.escape) return CSS.escape(String(s));
+    return String(s).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+  }
+
+  function pickStableClasses(el, max = 2) {
+    const ignore = [
+      "active",
+      "selected",
+      "hover",
+      "focus",
+      "open",
+      "closed",
+      "current",
+      "ng-star-inserted",
+    ];
+    const out = [];
+    for (const c of Array.from(el.classList || [])) {
+      const lc = c.toLowerCase();
+      if (!lc) continue;
+      if (ignore.includes(lc)) continue;
+      if (lc.startsWith("_ng")) continue;
+      if (lc.startsWith("ng-")) continue;
+      if (lc.includes("mat-")) continue;
+      out.push(c);
+      if (out.length >= max) break;
+    }
+    return out;
+  }
+
+  // Build a reusable selector for a "card" (should match many cards).
+  function buildReusableCardSelector(clickedEl) {
+    const maxUp = 6;
+    let cur = clickedEl;
+
+    for (let i = 0; i < maxUp && cur; i++) {
+      if (!(cur instanceof Element)) break;
+
+      const tag = cur.tagName.toLowerCase();
+      const cls = pickStableClasses(cur, 2);
+      let sel = tag;
+      if (cls.length) sel += "." + cls.map(cssEscape).join(".");
+      const count = safeQueryAllCount(sel);
+
+      // We WANT multiple matches (list of cards), but not "everything".
+      if (count >= 3 && count <= 500) return { selector: sel, matchCount: count };
+
+      cur = cur.parentElement;
+    }
+
+    // fallback: div
+    const fallbackCount = safeQueryAllCount("div");
+    return { selector: "div", matchCount: fallbackCount };
+  }
+
+  function safeQueryAllCount(selector) {
+    try {
+      return document.querySelectorAll(selector).length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  function firstNonEmpty(arr) {
+    for (const x of arr) {
+      if (x) return x;
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Structural fingerprint detector (generic fallback)
+  // ---------------------------------------------------------------------------
 
   class Fingerprint {
     constructor(map) {
@@ -137,173 +281,163 @@
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Item extractor (improved: avoids “1/10” overlay titles; can prefer href pattern)
+  // ---------------------------------------------------------------------------
+
   class ItemExtractor {
-  constructor(options = {}) {
-    // optional hint; if you later pass it from a site-profile, it helps even more
-    this.preferHrefIncludes = options.preferHrefIncludes || null; // e.g. "/obiava"
-  }
+    constructor(options = {}) {
+      this.preferHrefIncludes = options.preferHrefIncludes || null; // e.g. "/obiava/"
+    }
 
-  extractItem(el) {
-    const a = this._pickPrimaryLink(el);
-    const title = this._pickTitle(el, a);
-    const images = this._pickImages(el);
-    const texts = this._pickTexts(el);
-    return {
-      title,
-      url: a?.href || null,
-      image: images[0] || null,
-      images,
-      texts,
-      rawText: DomText.visibleText(el, 600),
-    };
-  }
+    extractItem(el) {
+      const a = this._pickPrimaryLink(el);
+      const title = this._pickTitle(el, a);
+      const images = this._pickImages(el);
+      const texts = this._pickTexts(el);
+      return {
+        title,
+        url: a?.href || null,
+        image: images[0] || null,
+        images,
+        texts,
+        rawText: DomText.visibleText(el, 600),
+      };
+    }
 
-  _isFractionLikeTitle(t) {
-    const s = DomText.normalize(t);
-    // "1/8", " 1 / 10 ", "1 /10"
-    return /^\d+\s*\/\s*\d+$/.test(s);
-  }
+    _isFractionLikeTitle(t) {
+      const s = DomText.normalize(t);
+      return /^\d+\s*\/\s*\d+$/.test(s);
+    }
 
-  _isNoiseTitle(t) {
-    const s = DomText.normalize(t).toLowerCase();
-    if (!s) return true;
-    if (this._isFractionLikeTitle(s)) return true;
-    // common UI labels that shouldn't be treated as listing title
-    const noise = ["контакт", "vip", "сделка", "виж", "подроб", "details", "more"];
-    if (noise.some((w) => s === w)) return true;
-    return false;
-  }
+    _isNoiseTitle(t) {
+      const s = DomText.normalize(t).toLowerCase();
+      if (!s) return true;
+      if (this._isFractionLikeTitle(s)) return true;
+      const noise = ["контакт", "vip", "сделка", "виж", "подроб", "details", "more"];
+      if (noise.some((w) => s === w)) return true;
+      return false;
+    }
 
-  _pickPrimaryLink(el) {
-    const links = Array.from(el.querySelectorAll("a[href]"))
-      .map((x) => x)
-      .filter((a) => a.href && !a.href.endsWith("#"));
+    _pickPrimaryLink(el) {
+      const links = Array.from(el.querySelectorAll("a[href]"))
+        .map((x) => x)
+        .filter((a) => a.href && !a.href.endsWith("#"));
 
-    if (!links.length) return null;
+      if (!links.length) return null;
 
-    let best = links[0],
-      bestScore = -Infinity;
+      let best = links[0],
+        bestScore = -Infinity;
 
-    for (const l of links.slice(0, 40)) {
-      const rect = l.getBoundingClientRect();
-      const area = Math.max(0, rect.width) * Math.max(0, rect.height);
+      for (const l of links.slice(0, 40)) {
+        const rect = l.getBoundingClientRect();
+        const area = Math.max(0, rect.width) * Math.max(0, rect.height);
 
-      const text = DomText.normalize(l.textContent);
-      const textLen = text.length;
+        const text = DomText.normalize(l.textContent);
+        const textLen = text.length;
 
-      // Base: clickable area matters
-      let score = area;
+        let score = area;
+        score += Math.min(textLen / 20, 4) * 250;
 
-      // Prefer meaningful link text
-      // (small bonus to avoid overlay counters winning)
-      score += Math.min(textLen / 20, 4) * 250;
+        if (this.preferHrefIncludes) {
+          try {
+            const u = new URL(l.href, location.href);
+            if ((u.pathname || "").toLowerCase().includes(this.preferHrefIncludes.toLowerCase())) {
+              score += 1500;
+            }
+          } catch (_) {}
+        } else {
+          try {
+            const u = new URL(l.href, location.href);
+            if (u.hostname === location.hostname && (u.pathname || "").split("/").filter(Boolean).length >= 2) {
+              score += 150;
+            }
+          } catch (_) {}
+        }
 
-      // Strongly prefer listing-detail href patterns (imoti.info: /obiava)
-      if (this.preferHrefIncludes) {
-        try {
-          const u = new URL(l.href, location.href);
-          if ((u.pathname || "").toLowerCase().includes(this.preferHrefIncludes.toLowerCase())) {
-            score += 1500;
-          }
-        } catch (_) {}
-      } else {
-        // generic heuristic: if it's same-host and looks like a detail page (long path)
-        try {
-          const u = new URL(l.href, location.href);
-          if (u.hostname === location.hostname && (u.pathname || "").split("/").filter(Boolean).length >= 2) {
-            score += 150;
-          }
-        } catch (_) {}
+        if (this._isFractionLikeTitle(text)) score -= 2000;
+
+        const hasImg = !!l.querySelector("img");
+        if (hasImg && textLen <= 4) score -= 800;
+
+        if (score > bestScore) {
+          bestScore = score;
+          best = l;
+        }
       }
 
-      // Penalize "fraction-like" overlay text (e.g. 1/8)
-      if (this._isFractionLikeTitle(text)) score -= 2000;
-
-      // Penalize links that are basically just an image (often gallery wrapper)
-      const hasImg = !!l.querySelector("img");
-      if (hasImg && textLen <= 4) score -= 800;
-
-      if (score > bestScore) {
-        bestScore = score;
-        best = l;
-      }
+      return best;
     }
 
-    return best;
-  }
-
-  _pickTitle(el, primaryLink) {
-    // 1) headings win if present
-    const head = el.querySelector("h1,h2,h3,h4");
-    if (head) {
-      const t = DomText.normalize(head.textContent);
-      if (t && !this._isNoiseTitle(t)) return DomText.safeTruncate(t, 160);
-    }
-
-    // 2) primary link text, but reject noise like "1/8"
-    if (primaryLink) {
-      const t = DomText.normalize(primaryLink.textContent);
-      if (t && t.length >= 3 && !this._isNoiseTitle(t)) return DomText.safeTruncate(t, 160);
-
-      const aria = DomText.normalize(primaryLink.getAttribute("aria-label"));
-      if (aria && !this._isNoiseTitle(aria)) return DomText.safeTruncate(aria, 160);
-    }
-
-    // 3) fallback: pick best-looking anchor text inside card
-    const anchors = Array.from(el.querySelectorAll("a[href]")).slice(0, 60);
-    let best = null;
-    let bestScore = -Infinity;
-
-    for (const a of anchors) {
-      const txt = DomText.normalize(a.textContent);
-      if (!txt || txt.length < 3) continue;
-      if (this._isNoiseTitle(txt)) continue;
-
-      // prefer longer, human-ish titles, but keep it bounded
-      let score = Math.min(txt.length, 60);
-
-      // prefer links that look like detail pages (imoti.info: /obiava)
-      if (this.preferHrefIncludes) {
-        try {
-          const u = new URL(a.href, location.href);
-          if ((u.pathname || "").toLowerCase().includes(this.preferHrefIncludes.toLowerCase())) score += 40;
-        } catch (_) {}
+    _pickTitle(el, primaryLink) {
+      const head = el.querySelector("h1,h2,h3,h4");
+      if (head) {
+        const t = DomText.normalize(head.textContent);
+        if (t && !this._isNoiseTitle(t)) return DomText.safeTruncate(t, 160);
       }
 
-      if (score > bestScore) {
-        bestScore = score;
-        best = txt;
+      if (primaryLink) {
+        const t = DomText.normalize(primaryLink.textContent);
+        if (t && t.length >= 3 && !this._isNoiseTitle(t)) return DomText.safeTruncate(t, 160);
+
+        const aria = DomText.normalize(primaryLink.getAttribute("aria-label"));
+        if (aria && !this._isNoiseTitle(aria)) return DomText.safeTruncate(aria, 160);
       }
+
+      const anchors = Array.from(el.querySelectorAll("a[href]")).slice(0, 60);
+      let best = null;
+      let bestScore = -Infinity;
+
+      for (const a of anchors) {
+        const txt = DomText.normalize(a.textContent);
+        if (!txt || txt.length < 3) continue;
+        if (this._isNoiseTitle(txt)) continue;
+
+        let score = Math.min(txt.length, 60);
+
+        if (this.preferHrefIncludes) {
+          try {
+            const u = new URL(a.href, location.href);
+            if ((u.pathname || "").toLowerCase().includes(this.preferHrefIncludes.toLowerCase())) score += 40;
+          } catch (_) {}
+        }
+
+        if (score > bestScore) {
+          bestScore = score;
+          best = txt;
+        }
+      }
+
+      if (best) return DomText.safeTruncate(best, 160);
+
+      const t = DomText.visibleText(el, 220);
+      return t || null;
     }
 
-    if (best) return DomText.safeTruncate(best, 160);
-
-    // 4) last resort: visible text
-    const t = DomText.visibleText(el, 220);
-    return t || null;
-  }
-
-  _pickImages(el) {
-    const imgs = Array.from(el.querySelectorAll("img"))
-      .map((img) => img.currentSrc || img.src)
-      .filter((src) => !!src);
-    return Array.from(new Set(imgs)).slice(0, 8);
-  }
-
-  _pickTexts(el) {
-    const lines = [];
-    const nodes = Array.from(el.querySelectorAll("span,div,p,li,strong,em,small")).slice(0, 120);
-    for (const n of nodes) {
-      const t = DomText.normalize(n.textContent);
-      if (!t) continue;
-      if (t.length < 3 || t.length > 160) continue;
-      lines.push(t);
-      if (lines.length >= 10) break;
+    _pickImages(el) {
+      const imgs = Array.from(el.querySelectorAll("img"))
+        .map((img) => img.currentSrc || img.src)
+        .filter((src) => !!src);
+      return Array.from(new Set(imgs)).slice(0, 8);
     }
-    return Array.from(new Set(lines));
-  }
-}
 
+    _pickTexts(el) {
+      const lines = [];
+      const nodes = Array.from(el.querySelectorAll("span,div,p,li,strong,em,small")).slice(0, 120);
+      for (const n of nodes) {
+        const t = DomText.normalize(n.textContent);
+        if (!t) continue;
+        if (t.length < 3 || t.length > 160) continue;
+        lines.push(t);
+        if (lines.length >= 10) break;
+      }
+      return Array.from(new Set(lines));
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Pagination helper (unchanged)
+  // ---------------------------------------------------------------------------
 
   class Navigation {
     static _isVisible(el) {
@@ -421,201 +555,93 @@
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Extraction runner (uses override-first, then generic fallback)
+  // ---------------------------------------------------------------------------
+
   class ExtractionRunner {
-    run() {
-      const t0 = performance.now();
-      const host = (location.hostname || "").toLowerCase();
+    async run() {
+      const t0 = nowMs();
+      const hostname = location.hostname;
 
-      const isImoti =
-        host === "imoti.info" ||
-        host.endsWith(".imoti.info") ||
-        host === "imoti.net" ||
-        host.endsWith(".imoti.net");
+      const override = await SiteOverrides.getForHost(hostname);
 
-      // ---------- Strategy 1: imoti.* group-by-href (/obiava/) ----------
-      if (isImoti) {
-        const out = this._extractImotiGroupedByHref();
-        if (out?.items?.length) {
-          const timingMs = Math.round(performance.now() - t0);
-          const result = {
-            dataVersion: 1,
-            sourceUrl: location.href,
-            pageTitle: document.title || null,
-            extractedAt: new Date().toISOString(),
-            meta: {
-              siteProfileUsed: "imoti.*",
-              strategyUsed: "groupByHref(/obiava/)->cardWrapper->forcedUrl",
-              itemCount: out.items.length,
-              sampleLinks: out.items.slice(0, 5).map((x) => x.url).filter(Boolean),
-              containerPath: out.containerPath || null,
-              timingMs,
-            },
-            items: out.items,
-          };
-          return { ok: true, result };
+      // Prefer override selectorCards if present
+      if (override?.selectorCards?.length) {
+        const preferPattern = override.listingLinkPattern || chooseListingLinkPatternFromPage();
+        const extracted = this._extractUsingSelectors(override.selectorCards, preferPattern);
+
+        if (extracted?.items?.length >= 3) {
+          const timingMs = Math.round(nowMs() - t0);
+          extracted.meta = extracted.meta || {};
+          extracted.meta.siteProfileUsed = hostname;
+          extracted.meta.strategyUsed = `override(selectorCards: ${override.selectorCards.join(", ")})`;
+          extracted.meta.timingMs = timingMs;
+          extracted.meta.itemCount = extracted.items.length;
+          extracted.meta.sampleLinks = extracted.items.map((it) => it.url).filter(Boolean).slice(0, 5);
+          return { ok: true, result: extracted };
         }
-        // fallback to generic below if needed
       }
 
-      // ---------- Strategy 2: generic ListDetector (unchanged) ----------
+      // Fallback: generic list detector
       const detector = new ListDetector();
       const cand = detector.detect();
       if (!cand) {
         return { ok: false, error: "No repeating list detected. Scroll so items are rendered, then run again." };
       }
 
-      const extractor = new ItemExtractor();
+      const preferPattern = override?.listingLinkPattern || chooseListingLinkPatternFromPage();
+      const extractor = new ItemExtractor({ preferHrefIncludes: preferPattern });
       const items = cand.items.map((el) => extractor.extractItem(el));
 
-      const timingMs = Math.round(performance.now() - t0);
       const result = {
         dataVersion: 1,
         sourceUrl: location.href,
         pageTitle: document.title || null,
         extractedAt: new Date().toISOString(),
         meta: {
-          siteProfileUsed: "generic",
-          strategyUsed: "generic(ListDetector direct-children)",
-          itemCount: items.length,
-          sampleLinks: items.slice(0, 5).map((x) => x.url).filter(Boolean),
           avgStructuralSimilarity: cand.avgSim,
           containerTag: cand.container.tagName.toLowerCase(),
           containerPath: this._cssPath(cand.container),
-          timingMs,
+          siteProfileUsed: hostname,
+          strategyUsed: "generic(ListDetector direct-children)",
+          timingMs: Math.round(nowMs() - t0),
+          itemCount: items.length,
+          sampleLinks: items.map((it) => it.url).filter(Boolean).slice(0, 5),
         },
         items,
       };
       return { ok: true, result };
     }
 
-    _extractImotiGroupedByHref() {
-      const prefer = "/obiava/";
-      const all = Array.from(document.querySelectorAll("a[href]"))
-        .filter((a) => {
-          try {
-            const u = new URL(a.href, location.href);
-            return u.hostname === location.hostname && (u.pathname || "").toLowerCase().includes(prefer);
-          } catch {
-            return false;
+    _extractUsingSelectors(selectors, preferPattern) {
+      let nodes = [];
+      for (const sel of selectors) {
+        try {
+          const found = Array.from(document.querySelectorAll(sel));
+          if (found.length) {
+            nodes = found;
+            break;
           }
-        })
-        .filter((a) => !a.closest("nav,.pagination,.pager,[aria-label*='page'],[class*='pag'],footer"));
-
-      if (all.length < 10) return null;
-
-      // Group anchors by listing href
-      const byHref = new Map();
-      for (const a of all) {
-        const key = a.href;
-        if (!byHref.has(key)) byHref.set(key, []);
-        byHref.get(key).push(a);
+        } catch (_) {}
       }
 
-      // Use your ItemExtractor noise logic to pick best title anchor per href
-      const tmpExtractor = new ItemExtractor({ preferHrefIncludes: prefer });
+      if (!nodes.length) return null;
 
-      const items = [];
-      let firstCardEl = null;
-
-      for (const [href, anchors] of byHref.entries()) {
-        // choose best anchor text for title
-        const bestA = this._pickBestTitleAnchor(tmpExtractor, anchors);
-        const card = this._pickCardWrapperForHref(href, anchors);
-
-        if (!card) continue;
-        if (!firstCardEl) firstCardEl = card;
-
-        // Extract from the card but FORCE url to the listing href
-        const title = tmpExtractor._pickTitle(card, bestA || anchors[0]);
-        const images = tmpExtractor._pickImages(card);
-        const texts = tmpExtractor._pickTexts(card);
-
-        items.push({
-          title,
-          url: href,
-          image: images[0] || null,
-          images,
-          texts,
-          rawText: DomText.visibleText(card, 600),
-        });
-      }
-
-      if (items.length < 6) return null;
+      const extractor = new ItemExtractor({ preferHrefIncludes: preferPattern });
+      const items = nodes.slice(0, 200).map((el) => extractor.extractItem(el));
 
       return {
-        items: items.slice(0, 80),
-        containerPath: firstCardEl ? this._cssPath(firstCardEl) : null,
+        dataVersion: 1,
+        sourceUrl: location.href,
+        pageTitle: document.title || null,
+        extractedAt: new Date().toISOString(),
+        meta: {
+          containerTag: nodes[0]?.tagName?.toLowerCase?.() || null,
+          containerPath: this._cssPath(nodes[0]),
+        },
+        items,
       };
-    }
-
-    _pickBestTitleAnchor(extractor, anchors) {
-      let best = null;
-      let bestScore = -Infinity;
-
-      for (const a of anchors) {
-        const txt = DomText.normalize(a.textContent);
-        if (!txt) continue;
-        if (extractor._isNoiseTitle(txt)) continue;
-
-        // prefer human titles like "3-стаен..." over long price blobs
-        let score = Math.min(txt.length, 80);
-
-        // mild boost if it contains common listing words
-        const s = txt.toLowerCase();
-        if (s.includes("стаен") || s.includes("кв.м") || s.includes("тухла")) score += 25;
-
-        if (score > bestScore) {
-          bestScore = score;
-          best = a;
-        }
-      }
-      return best;
-    }
-
-    _pickCardWrapperForHref(href, anchors) {
-      // Find a local wrapper that contains both picture+info OR is "card-sized",
-      // and does NOT contain many other /obiava/ hrefs.
-      // We'll try candidates from the best anchor upwards.
-      const start = anchors.find((a) => DomText.normalize(a.textContent)) || anchors[0];
-      let cur = start;
-
-      for (let i = 0; i < 12 && cur; i++) {
-        cur = cur.parentElement;
-        if (!cur) break;
-
-        const r = cur.getBoundingClientRect();
-        if (!r || r.width < 250 || r.height < 60) continue;
-
-        const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
-        const vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
-
-        // reject huge wrappers (whole page / main layout)
-        if (r.width > vw * 0.98 && r.height > vh * 0.85) continue;
-
-        const style = window.getComputedStyle(cur);
-        if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") continue;
-
-        const hasPic = !!cur.querySelector("div.picture");
-        const hasInfo = !!cur.querySelector("div.info");
-
-        const listingAnchors = Array.from(cur.querySelectorAll("a[href*='/obiava/']"));
-        const uniqueListings = new Set(listingAnchors.map((a) => a.href)).size;
-
-        // A card wrapper should not contain many other listing hrefs
-        if (uniqueListings > 2) continue;
-
-        // And should contain the current href
-        if (!listingAnchors.some((a) => a.href === href)) continue;
-
-        // Prefer wrappers that look like the actual card composition
-        if (hasPic && hasInfo) return cur;
-
-        // Otherwise accept if it has a small number of anchors and reasonable text
-        const txtLen = DomText.visibleText(cur, 280).length;
-        if (txtLen >= 15 && listingAnchors.length >= 2 && listingAnchors.length <= 8) return cur;
-      }
-
-      return null;
     }
 
     _cssPath(el) {
@@ -624,18 +650,8 @@
       let cur = el;
       for (let i = 0; i < 6 && cur; i++) {
         let part = cur.tagName.toLowerCase();
-        if (cur.id) {
-          part += "#" + cur.id;
-          parts.unshift(part);
-          break;
-        }
-        const cls = (cur.className || "")
-          .toString()
-          .trim()
-          .split(/\s+/)
-          .filter(Boolean)
-          .slice(0, 2);
-        if (cls.length) part += "." + cls.join(".");
+        const cls = pickStableClasses(cur, 2);
+        if (cls.length) part += "." + cls.map(cssEscape).join(".");
         parts.unshift(part);
         cur = cur.parentElement;
       }
@@ -643,291 +659,242 @@
     }
   }
 
-
-
+  // ---------------------------------------------------------------------------
+  // Onboarding checklist (returns report used by sidepanel)
+  // ---------------------------------------------------------------------------
 
   class Onboarding {
-    static _cssPath(el) {
-      if (!el || !(el instanceof Element)) return null;
-      const parts = [];
-      let cur = el;
-      for (let i = 0; i < 6 && cur; i++) {
-        let part = cur.tagName.toLowerCase();
-        if (cur.id) {
-          part += "#" + cur.id;
-          parts.unshift(part);
-          break;
-        }
-        const cls = (cur.className || "")
-          .toString()
-          .trim()
-          .split(/\s+/)
-          .filter(Boolean)
-          .slice(0, 2);
-        if (cls.length) part += "." + cls.join(".");
-        parts.unshift(part);
-        cur = cur.parentElement;
-      }
-      return parts.join(" > ");
-    }
-
-    static _stableSelectorFor(el) {
-      if (!el || !(el instanceof Element)) return null;
-      const tag = el.tagName.toLowerCase();
-      if (el.id) return `#${CSS.escape(el.id)}`;
-
-      const classes = Array.from(el.classList || [])
-        .map((c) => String(c))
-        .filter((c) => c.length >= 3)
-        .filter((c) => /^[a-zA-Z][a-zA-Z0-9_-]+$/.test(c))
-        .filter((c) => !/^(active|selected|open|closed|hover|focus|ng-|js-)/i.test(c))
-        .slice(0, 2);
-
-      if (classes.length) {
-        return `${tag}.${classes.map((c) => CSS.escape(c)).join(".")}`;
-      }
-
-      // Fallbacks for common controls
-      const rel = el.getAttribute("rel");
-      if (rel === "next") return `${tag}[rel="next"]`;
-
-      const aria = (el.getAttribute("aria-label") || "").trim();
-      if (aria) return `${tag}[aria-label*="${aria.replace(/\"/g, "")}"]`;
-
-      return tag;
-    }
-
-    static _pickListingLinkIncludes(pathsLower) {
-      // Priority: obvious real-estate listing tokens
-      const priority = ["/obiava", "/offer", "/listing", "/imot", "/property", "/estate", "/ad/"];
-      for (const p of priority) {
-        if (pathsLower.some((x) => x.includes(p))) return p;
-      }
-
-      // Otherwise, choose the most frequent non-generic 1-2 segment prefix
-      const stopSeg = new Set([
-        "bg",
-        "en",
-        "search",
-        "filter",
-        "login",
-        "register",
-        "account",
-        "user",
-        "profile",
-        "favorites",
-        "favourites",
-        "static",
-        "assets",
-        "css",
-        "js",
-        "images",
-        "img",
-        "api",
-      ]);
-
-      const counts = new Map();
-      for (const path of pathsLower) {
-        const segs = String(path || "")
-          .split("?")[0]
-          .split("#")[0]
-          .split("/")
-          .filter(Boolean);
-        if (!segs.length) continue;
-        if (stopSeg.has(segs[0])) continue;
-        const one = "/" + segs[0];
-        counts.set(one, (counts.get(one) || 0) + 1);
-        if (segs.length >= 2 && !stopSeg.has(segs[1])) {
-          const two = "/" + segs[0] + "/" + segs[1];
-          counts.set(two, (counts.get(two) || 0) + 1);
-        }
-      }
-
-      const ranked = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
-      const best = ranked[0]?.[0] || null;
-      return best;
-    }
-
     static run() {
-      const hostname = location.hostname || null;
-      const url = location.href || null;
-      const title = document.title || null;
+      const hostname = location.hostname;
+      const url = location.href;
+
+      const listingLinkPattern = chooseListingLinkPatternFromPage();
 
       const allAnchors = Array.from(document.querySelectorAll("a[href]"))
-        .map((a) => a)
-        .filter((a) => !!a.getAttribute("href"));
+        .filter((a) => a.href && !a.href.endsWith("#") && !isProbablyFooterOrNav(a));
 
-      const hrefs = [];
-      const pathsLower = [];
-      for (const a of allAnchors.slice(0, 4000)) {
-        try {
-          const u = new URL(a.href, location.href);
-          hrefs.push(u.href);
-          if (u.hostname === location.hostname) pathsLower.push((u.pathname || "").toLowerCase());
-        } catch (_) {}
-      }
-
-      const listingLinkIncludes = Onboarding._pickListingLinkIncludes(pathsLower);
-      const listingAnchors = listingLinkIncludes
+      const matchingAnchors = listingLinkPattern
         ? allAnchors.filter((a) => {
-            try {
-              return new URL(a.href, location.href).pathname.toLowerCase().includes(listingLinkIncludes);
-            } catch (_) {
-              return false;
-            }
+            const u = tryUrl(a.href);
+            return (u?.pathname || "").toLowerCase().includes(listingLinkPattern.toLowerCase());
           })
         : [];
 
-      // Suggest card roots via common ancestors of listing anchors
-      const rootCounts = new Map();
-      const rootEls = new Map();
-      const rootsSample = [];
-      const rootTags = ["article", "li", "div"]; // conservative
+      // Guess card wrappers by looking at common closest() containers around listing anchors
+      const wrapperCounts = new Map();
+      const wrapperSamples = [];
 
-      for (const a of listingAnchors.slice(0, 250)) {
-        let root = null;
-        for (const tag of rootTags) {
-          root = a.closest(tag);
-          if (root) break;
-        }
-        root = root || a.parentElement;
-        if (!root) continue;
-
-        const sel = Onboarding._stableSelectorFor(root);
-        if (!sel) continue;
-        rootCounts.set(sel, (rootCounts.get(sel) || 0) + 1);
-        if (!rootEls.has(sel)) rootEls.set(sel, root);
+      for (const a of matchingAnchors.slice(0, 400)) {
+        const wrap = a.closest("article, li, div");
+        if (!wrap) continue;
+        const { selector } = buildReusableCardSelector(wrap);
+        wrapperCounts.set(selector, (wrapperCounts.get(selector) || 0) + 1);
+        if (wrapperSamples.length < 5) wrapperSamples.push(selector);
       }
 
-      const rankedRoots = Array.from(rootCounts.entries()).sort((a, b) => b[1] - a[1]);
-      const cardRootSelectors = rankedRoots.slice(0, 5).map((x) => x[0]);
-      const bestRootSel = rankedRoots[0]?.[0] || null;
-      const bestRootEl = bestRootSel ? rootEls.get(bestRootSel) : null;
-      const containerPath = bestRootEl ? Onboarding._cssPath(bestRootEl) : null;
+      const rankedWrappers = Array.from(wrapperCounts.entries())
+        .map(([selector, count]) => ({ selector, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 8);
 
-      // Pagination hint
-      const nextCtrl = Navigation.findNextControl();
-      const paginationHint = (() => {
-        if (!nextCtrl) return null;
-        if (nextCtrl.type === "href") return { type: "href", href: nextCtrl.href || null };
-        if (nextCtrl.type === "click" && nextCtrl.el) {
-          return {
-            type: "click",
-            selector: Onboarding._stableSelectorFor(nextCtrl.el),
-            containerPath: Onboarding._cssPath(nextCtrl.el),
-          };
-        }
-        return null;
-      })();
+      const bestSelector = rankedWrappers[0]?.selector || null;
 
-      const checklist = {
-        hostname,
-        url,
-        title,
-        anchorsTotal: allAnchors.length,
-        listingLinkIncludes,
-        listingAnchorsFound: listingAnchors.length,
-        cardRootSelectors,
-        containerPath,
-        paginationHint,
+      const report = {
+        ok: true,
+        report: {
+          hostname,
+          url,
+          listingLinkPattern,
+          anchorsTotal: allAnchors.length,
+          anchorsMatchingPattern: matchingAnchors.length,
+          wrapperCandidates: rankedWrappers,
+          suggestedOverride: bestSelector
+            ? {
+                selectorCards: [bestSelector],
+                listingLinkPattern: listingLinkPattern || null,
+              }
+            : null,
+        },
       };
 
-      const recommendedOverride = hostname
-        ? {
-            [hostname]: {
-              listingLinkIncludes: listingLinkIncludes || null,
-              cardRootSelectors: cardRootSelectors.length ? cardRootSelectors : null,
-              waitForSelector: cardRootSelectors.length ? cardRootSelectors[0] : null,
-              pagination: paginationHint ? { next: paginationHint } : null,
-            },
-          }
-        : {};
-
-      return {
-        checklist,
-        recommendedOverride,
-        timingMs: null,
-      };
+      return report;
     }
   }
 
-  // ✅ STEP 1: Expose a reusable API on window (Chrome extension OR Playwright)
-  const api = {
-    version: 1,
-    run() {
-      const runner = new ExtractionRunner();
-      return runner.run();
-    },
-    async navigateNext() {
-      return Navigation.navigateNext();
-    },
-    async loadMore(options = {}) {
-      return LoadMore.run(options);
-    },
-    async loadMoreThenExtract(options = {}) {
-      await LoadMore.run(options);
-      const runner = new ExtractionRunner();
-      return runner.run();
-    },
+  // ---------------------------------------------------------------------------
+  // Click-to-select picker (highlights elements; click returns selector)
+  // ---------------------------------------------------------------------------
 
-    // ✅ Step 5 (as code): "Site onboarding checklist" runner
-    // Produces a self-report + a suggested per-host override.
-    // This is intentionally heuristic — the goal is to generate *something*
-    // you can save in chrome.storage and iterate on.
-    onboard() {
-      const t0 = performance.now();
-      const report = Onboarding.run();
-      report.timingMs = Math.round(performance.now() - t0);
-      return report;
-    },
-    // Optional: expose internals for debugging
-    _internals: { DomText, Fingerprint, ListDetector, ItemExtractor, Navigation, LoadMore, ExtractionRunner },
-  };
+  class Picker {
+    constructor() {
+      this.active = false;
+      this.overlay = null;
+      this._onMove = this._onMove.bind(this);
+      this._onClick = this._onClick.bind(this);
+      this._lastEl = null;
+    }
 
-  // Keep existing if already present (don’t break other injections)
-  window.__imotiExtractor = window.__imotiExtractor || api;
+    start() {
+      if (this.active) return;
+      this.active = true;
 
-  // ✅ Chrome-only messaging (guarded so Playwright doesn’t crash)
-  if (typeof chrome !== "undefined" && chrome?.runtime?.onMessage?.addListener) {
-    chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-      (async () => {
-        const type = msg?.type;
+      this.overlay = document.createElement("div");
+      this.overlay.style.position = "fixed";
+      this.overlay.style.pointerEvents = "none";
+      this.overlay.style.zIndex = "2147483647";
+      this.overlay.style.outline = "3px solid lime";
+      this.overlay.style.background = "rgba(0,255,0,0.05)";
+      document.documentElement.appendChild(this.overlay);
 
-        // Backward compatible
-        if (type === "RUN_EXTRACTION" || type === "DETECT_AND_EXTRACT") {
-          sendResponse(window.__imotiExtractor.run());
-          return;
+      document.addEventListener("mousemove", this._onMove, true);
+      document.addEventListener("click", this._onClick, true);
+    }
+
+    stop() {
+      if (!this.active) return;
+      this.active = false;
+
+      document.removeEventListener("mousemove", this._onMove, true);
+      document.removeEventListener("click", this._onClick, true);
+
+      if (this.overlay) this.overlay.remove();
+      this.overlay = null;
+      this._lastEl = null;
+    }
+
+    _onMove(e) {
+      if (!this.active) return;
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      if (!el || !(el instanceof Element)) return;
+      if (this.overlay && el === this.overlay) return;
+
+      // Choose a reasonable "card-ish" target to highlight
+      const target = el.closest("article, li, div") || el;
+      if (!(target instanceof Element)) return;
+
+      this._lastEl = target;
+
+      const r = target.getBoundingClientRect();
+      if (!this.overlay) return;
+      this.overlay.style.left = `${Math.max(0, r.left)}px`;
+      this.overlay.style.top = `${Math.max(0, r.top)}px`;
+      this.overlay.style.width = `${Math.max(0, r.width)}px`;
+      this.overlay.style.height = `${Math.max(0, r.height)}px`;
+    }
+
+    _onClick(e) {
+      if (!this.active) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      const clicked = this._lastEl || (document.elementFromPoint(e.clientX, e.clientY) instanceof Element
+        ? document.elementFromPoint(e.clientX, e.clientY)
+        : null);
+
+      if (!(clicked instanceof Element)) {
+        this.stop();
+        return;
+      }
+
+      const { selector, matchCount } = buildReusableCardSelector(clicked);
+
+      const anchors = Array.from(clicked.querySelectorAll("a[href]"));
+      let listingLinkPattern = null;
+      let sampleListingHref = null;
+
+      // Try infer pattern from anchors inside clicked card
+      for (const a of anchors) {
+        const u = tryUrl(a.href);
+        if (!u) continue;
+        const p = (u.pathname || "").toLowerCase();
+        if (p.includes("/obiava/")) listingLinkPattern = "/obiava/";
+        else if (p.includes("/offer/")) listingLinkPattern = "/offer/";
+        else if (p.includes("/listing/")) listingLinkPattern = "/listing/";
+        else if (p.includes("/ad/")) listingLinkPattern = "/ad/";
+        else if (p.includes("/property/")) listingLinkPattern = "/property/";
+        if (listingLinkPattern) {
+          sampleListingHref = a.href;
+          break;
         }
+      }
 
-        if (type === "NAVIGATE_NEXT_PAGE" || type === "NAVIGATE_NEXT") {
-          const didNavigate = await window.__imotiExtractor.navigateNext();
-          sendResponse({ ok: true, didNavigate });
-          return;
-        }
+      // Fallback: infer from whole page (best pattern)
+      if (!listingLinkPattern) listingLinkPattern = chooseListingLinkPatternFromPage();
+      if (!sampleListingHref) sampleListingHref = firstNonEmpty(anchors.map((a) => a.href));
 
-        if (type === "LOAD_MORE") {
-          await window.__imotiExtractor.loadMore(msg.options || {});
-          sendResponse({ ok: true });
-          return;
-        }
-
-        if (type === "LOAD_MORE_THEN_EXTRACT") {
-          const out = await window.__imotiExtractor.loadMoreThenExtract(msg.options || {});
-          sendResponse(out);
-          return;
-        }
-
-        if (type === "ONBOARD_SITE") {
-          const report = window.__imotiExtractor.onboard();
-          sendResponse({ ok: true, report });
-          return;
-        }
-
-        sendResponse({ ok: false, error: "Unknown message type" });
-      })().catch((e) => {
-        sendResponse({ ok: false, error: String(e?.message || e) });
+      chrome.runtime.sendMessage({
+        type: "PICKER_RESULT",
+        result: {
+          hostname: location.hostname,
+          url: location.href,
+          selector,
+          matchCount,
+          listingLinkPattern,
+          sampleListingHref,
+        },
       });
-      return true;
-    });
+
+      this.stop();
+    }
   }
+
+  const picker = new Picker();
+
+  // ---------------------------------------------------------------------------
+  // Messaging
+  // ---------------------------------------------------------------------------
+
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    (async () => {
+      const type = msg?.type;
+
+      if (type === "RUN_EXTRACTION") {
+        const runner = new ExtractionRunner();
+        sendResponse(await runner.run());
+        return;
+      }
+
+      if (type === "NAVIGATE_NEXT_PAGE") {
+        const didNavigate = await Navigation.navigateNext();
+        sendResponse({ ok: true, didNavigate });
+        return;
+      }
+
+      if (type === "LOAD_MORE") {
+        await LoadMore.run(msg.options || {});
+        sendResponse({ ok: true });
+        return;
+      }
+
+      if (type === "LOAD_MORE_THEN_EXTRACT") {
+        await LoadMore.run(msg.options || {});
+        const runner = new ExtractionRunner();
+        sendResponse(await runner.run());
+        return;
+      }
+
+      if (type === "ONBOARD_SITE") {
+        sendResponse(Onboarding.run());
+        return;
+      }
+
+      if (type === "START_PICKER") {
+        picker.start();
+        sendResponse({ ok: true, started: true });
+        return;
+      }
+
+      if (type === "STOP_PICKER") {
+        picker.stop();
+        sendResponse({ ok: true, stopped: true });
+        return;
+      }
+
+      sendResponse({ ok: false, error: "Unknown message type" });
+    })().catch((e) => {
+      sendResponse({ ok: false, error: String(e?.message || e) });
+    });
+    return true;
+  });
 })();
