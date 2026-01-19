@@ -1,0 +1,19 @@
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# Node / JS
+node_modules/
+
+# Docker
+*.log
+
+# Build / cache
+dist/
+build/

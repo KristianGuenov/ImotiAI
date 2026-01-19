@@ -1,0 +1,87 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - extractor_db:/var/lib/postgresql/data
+
+  api:
+    build: ./backend
+    environment:
+      API_KEY: ${API_KEY}
+      DATABASE_URL: ${DATABASE_URL}
+    ports:
+      - "8787:8787"
+    depends_on:
+      - db
+
+  # Regular/index scraper (list pages -> item URLs, image URLs, short text, etc.)
+  scraper:
+    profiles: ["scrape"]
+    build:
+      context: .
+      dockerfile: scraper/Dockerfile
+    environment:
+      # Index runner uses this endpoint
+      API_ENDPOINT: http://api:8787/api/v1/extractions
+      API_KEY: ${API_KEY}
+      TARGETS_FILE: /app/targets.yml
+      CONTENT_SCRIPT_PATH: /app/content.js
+      TZ: Europe/Sofia
+
+      # Detail runner defaults (can be overridden on CLI)
+      API_BASE: http://api:8787
+      DETAIL_RULES_FILE: /app/scraper/detail_rules.yml
+      DETAIL_QUEUE_LIMIT: 200
+      DETAIL_MAX_URLS: 200
+      DETAIL_GLOBAL_CONCURRENCY: 6
+      DETAIL_POST_BATCH_SIZE: 25
+    shm_size: "1gb"
+    volumes:
+      - ./scraper/targets.yml:/app/targets.yml:ro
+      - ./extension/content.js:/app/content.js:ro
+      - ./scraper/detail_rules.yml:/app/scraper/detail_rules.yml:ro
+      - ./scraper/detail_extractor.js:/app/scraper/detail_extractor.js:ro
+    depends_on:
+      - api
+
+  # Optional: runs the detail runner once per day and drains the whole queue (multi-domain).
+  # Enable with: docker compose --profile schedule up -d detail_scheduler
+  detail_scheduler:
+    profiles: ["schedule"]
+    build:
+      context: .
+      dockerfile: scraper/Dockerfile
+    environment:
+      API_BASE: http://api:8787
+      API_KEY: ${API_KEY}
+      TZ: Europe/Sofia
+      DETAIL_RULES_FILE: /app/scraper/detail_rules.yml
+
+      # Schedule settings
+      DETAIL_RUN_AT: "05:00"          # Europe/Sofia
+      DETAIL_RUN_ON_START: "0"        # set to 1 if you want an immediate run at container start
+
+      # Detail runner tuning (used by detail_scheduler -> detail_runner)
+      DETAIL_QUEUE_LIMIT: 300
+      DETAIL_MAX_URLS: 300
+      DETAIL_GLOBAL_CONCURRENCY: 6
+      DETAIL_POST_BATCH_SIZE: 25
+      DETAIL_BATCH_SLEEP_S: "0.5"
+    shm_size: "1gb"
+    volumes:
+      - ./scraper/detail_rules.yml:/app/scraper/detail_rules.yml:ro
+      - ./scraper/detail_extractor.js:/app/scraper/detail_extractor.js:ro
+    command: ["python", "-m", "scraper.detail_scheduler"]
+    depends_on:
+      - api
+
+volumes:
+  extractor_db:

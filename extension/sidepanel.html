@@ -1,0 +1,180 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ImotiAI Extractor</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <img class="logo" src="assets/icon-48.png" alt="ImotiAI" />
+        <div>
+          <div class="name">ImotiAI Extractor</div>
+          <div class="sub">Smart extraction for authorized pages</div>
+        </div>
+      </div>
+
+      <div class="right">
+        <div class="pill" id="sitePill">—</div>
+        <button class="iconBtn" id="btnOptions" title="Options">⚙</button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <nav class="rail">
+        <button class="tab active" data-tab="extract">Extract</button>
+        <button class="tab" data-tab="batch">Batch</button>
+        <button class="tab" data-tab="data">Data</button>
+      </nav>
+
+      <main class="content">
+        <!-- EXTRACT -->
+        <section class="panel active" id="tab-extract">
+          <div class="hero">
+            <div>
+              <div class="heroTitle">Extract</div>
+              <div class="heroSub">Extract the best repeating list from the current page.</div>
+            </div>
+            <div class="status">
+              <span class="dot ok" id="dot"></span>
+              <span id="statusText">Idle</span>
+            </div>
+          </div>
+
+          <div class="grid">
+            <div class="card">
+              <div class="cardTitle">Actions</div>
+
+              <div class="btnRow">
+                <button class="primary" id="btnExtract">Extract</button>
+                <button id="btnSend" disabled>Send</button>
+              </div>
+
+              <div class="btnRow">
+                <button id="btnExport" disabled>Export JSON</button>
+                <button class="ghost" id="btnRefresh">Refresh URL</button>
+              </div>
+
+              <div class="meta">
+                <div><strong>URL:</strong> <span id="url">—</span></div>
+                <div><strong>Items:</strong> <span id="count">0</span></div>
+                <div><strong>Last run id:</strong> <span id="lastId">—</span></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="cardTitle">Preview</div>
+              <pre class="preview" id="preview">Click “Extract” to capture items.</pre>
+            </div>
+          </div>
+        </section>
+
+        <!-- BATCH -->
+        <section class="panel" id="tab-batch">
+          <div class="hero">
+            <div>
+              <div class="heroTitle">Batch</div>
+              <div class="heroSub">Pagination and “Load more” extraction.</div>
+            </div>
+            <div class="status">
+              <span class="dot ok" id="dotBatch"></span>
+              <span id="statusBatch">Ready</span>
+            </div>
+          </div>
+
+          <div class="grid">
+            <div class="card">
+              <div class="cardTitle">Pagination</div>
+
+              <div class="row2">
+                <label class="lbl">
+                  Max pages
+                  <input id="maxPages" type="number" min="1" max="200" value="25" />
+                </label>
+                <label class="lbl">
+                  Delay (ms)
+                  <input id="delayMs" type="number" min="0" max="20000" value="2500" />
+                </label>
+              </div>
+
+              <div class="btnRow">
+                <button class="primary" id="btnBatch">Run pagination</button>
+                <button class="danger" id="btnStop" disabled>Stop</button>
+              </div>
+
+              <div class="hint">
+                Uses the page’s “Next” control. Stops when no next page is detected.
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="cardTitle">Load more / Infinite scroll</div>
+
+              <div class="row2">
+                <label class="lbl">
+                  Scroll steps
+                  <input id="scrollSteps" type="number" min="1" max="200" value="16" />
+                </label>
+                <label class="lbl">
+                  Idle cycles
+                  <input id="idleCycles" type="number" min="1" max="10" value="2" />
+                </label>
+              </div>
+
+              <div class="btnRow">
+                <button class="primary" id="btnLoadMore">Load more + extract</button>
+              </div>
+
+              <div class="hint">
+                Scrolls down to trigger lazy loading, then extracts.
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="cardTitle">Batch log</div>
+            <pre class="preview" id="batchLog">Start a batch to see progress.</pre>
+          </div>
+        </section>
+
+        <!-- DATA -->
+        <section class="panel" id="tab-data">
+          <div class="hero">
+            <div>
+              <div class="heroTitle">Backend</div>
+              <div class="heroSub">Health check and quick links.</div>
+            </div>
+          </div>
+
+          <div class="grid">
+            <div class="card">
+              <div class="cardTitle">Checks</div>
+              <div class="btnRow">
+                <button class="primary" id="btnHealth">Check /health</button>
+                <button class="ghost" id="btnOpenDocs">Open /docs</button>
+              </div>
+              <div class="hint" id="healthOut">Not checked yet.</div>
+            </div>
+
+            <div class="card">
+              <div class="cardTitle">Notes</div>
+              <ul class="bullets">
+                <li>Batch uses your existing API endpoints and DB.</li>
+                <li>If you changed ports, update them in Options.</li>
+                <li>Do not run <code>docker compose down -v</code> if you want to keep data.</li>
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        <footer class="foot">
+          Use only on pages you are authorized to access and extract.
+        </footer>
+      </main>
+    </div>
+
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

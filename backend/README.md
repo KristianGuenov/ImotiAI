@@ -1,0 +1,58 @@
+# Legal List Extractor (Backend) — Postgres-ready
+
+This backend receives extraction payloads from the companion Chrome extension and stores them in a database.
+
+## Quickstart (docker-compose, recommended)
+
+From repo root:
+
+```bash
+docker compose up --build
+```
+
+API:
+- `http://localhost:8787/health`
+- `POST http://localhost:8787/api/v1/extractions` (requires `X-API-Key`)
+
+## Quickstart (local Python + external Postgres)
+
+1) Run Postgres (example with Docker):
+
+```bash
+docker run --name extractor-db -e POSTGRES_PASSWORD=extractor -e POSTGRES_USER=extractor -e POSTGRES_DB=extractor -p 5432:5432 -d postgres:16
+```
+
+2) Configure `.env`:
+
+```env
+API_KEY=dev-key-change-me
+DATABASE_URL=postgresql+psycopg://extractor:extractor@localhost:5432/extractor
+```
+
+3) Run:
+
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8787
+```
+
+
+Real estate websites:
+Imot bg 
+Imoti.net
+Imoti.info
+Bazar.bg Real Estate
+Homes.bg 
+Imoteka.bg
+Address.bg
+Unique Estates
+Luximmo.bg
+BulgarianProperties.bg
+Mirela.bg
+Homes2u.bg
+Yavlena
+Building Box
+Realistimo

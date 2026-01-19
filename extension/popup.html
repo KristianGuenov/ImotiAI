@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Legal List Extractor</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <h1>List Extractor</h1>
+      <p class="sub">Extract repeating items from the current tab.</p>
+    </header>
+
+    <div class="card">
+      <button id="btnExtract">Extract this page</button>
+
+      <div class="row">
+        <button id="btnExport" disabled>Export JSON</button>
+        <button id="btnSend" disabled>Send to Backend</button>
+      </div>
+
+      <hr class="sep" />
+
+      <div class="section">
+        <div class="sectionTitle">Batch: Pagination</div>
+        <div class="grid2">
+          <label class="lbl">
+            Max pages
+            <input id="maxPages" type="number" min="1" max="200" value="10" />
+          </label>
+          <label class="lbl">
+            Delay (ms)
+            <input id="delayMs" type="number" min="0" max="20000" value="1500" />
+          </label>
+        </div>
+        <div class="row">
+          <button id="btnBatch">Extract next pages</button>
+          <button id="btnStop" class="danger" disabled>Stop</button>
+        </div>
+        <div class="hint">Traverses the site’s normal “Next” page control and extracts each page. Stops when no next page is found or max pages is reached.</div>
+      </div>
+
+      <hr class="sep" />
+
+      <div class="section">
+        <div class="sectionTitle">Load more / Infinite scroll</div>
+        <div class="grid2">
+          <label class="lbl">
+            Scroll steps
+            <input id="scrollSteps" type="number" min="1" max="200" value="12" />
+          </label>
+          <label class="lbl">
+            Idle cycles
+            <input id="idleCycles" type="number" min="1" max="10" value="2" />
+          </label>
+        </div>
+        <div class="row">
+          <button id="btnLoadMore">Load more + extract</button>
+        </div>
+        <div class="hint">Scrolls to load additional items, then extracts the page once loading stabilizes.</div>
+      </div>
+
+      <div class="row">
+        <button id="btnOptions" class="link">Options</button>
+        <span id="status" class="status">Idle</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="meta">
+        <div><strong>URL:</strong> <span id="url">—</span></div>
+        <div><strong>Items:</strong> <span id="count">0</span></div>
+        <div><strong>Last run id:</strong> <span id="lastId">—</span></div>
+      </div>
+      <pre id="preview" class="preview">Run “Extract this page” to see a sample.</pre>
+    </div>
+
+    <footer>
+      <p class="legal">
+        Use only on pages you are authorized to access and extract.
+      </p>
+    </footer>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

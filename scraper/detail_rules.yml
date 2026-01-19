@@ -1,0 +1,61 @@
+# Detail-scrape URL selection & speed rules (multi-domain)
+#
+# How it works:
+# - detail_runner fetches URL candidates from /api/v1/detail-queue (across ALL domains)
+# - it then applies these rules per-domain:
+#     * include_any/include_regex: if set, URL must match at least one
+#     * exclude_any/exclude_regex: URL must not match any
+# - if a domain has no matching rule, the `defaults` rule is used.
+#
+# Tip: Start with only a couple of domains, then add more as you onboard sites.
+
+defaults:
+  # Concurrency applied when a domain has no explicit rule.
+  concurrency: 2
+
+  # If the extracted description is shorter than this, the runner will skip posting.
+  min_desc_len: 60
+
+  # Playwright nav settings.
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+
+  # Generic extractor script.
+  extractor_script: /app/scraper/detail_extractor.js
+
+  # Conservative URL hygiene (helps avoid list/search pages when your index scraper captured a bad link).
+  # Leave include_* empty by default (accept all), but exclude obvious non-detail patterns.
+  exclude_any:
+    - "?page="
+    - "&page="
+    - "/search"
+    - "/obiavi/"  # imot.bg list pages
+    - "/category"
+    - "/filter"
+    - "/login"
+    - "/register"
+    - "/account"
+
+  exclude_regex: []
+  include_any: []
+  include_regex: []
+
+# Domain-specific overrides
+# NOTE: `domain` matches by suffix. Example: rule domain "imot.bg" matches "www.imot.bg".
+
+domains:
+  - domain: imot.bg
+    concurrency: 3
+    min_desc_len: 40
+    include_any:
+      - "/obiava"   # imot.bg listing detail URLs
+    exclude_any:
+      - "/obiavi/"  # list pages
+
+  # Example template for the next portals you onboard:
+  # - domain: address.bg
+  #   concurrency: 2
+  #   include_regex:
+  #     - "/(offer|imot|property)/"
+  #   exclude_any:
+  #     - "/search"

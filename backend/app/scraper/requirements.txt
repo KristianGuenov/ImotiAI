@@ -1,0 +1,5 @@
+httpx>=0.25,<1.0
+PyYAML>=6.0,<7.0
+
+# IMPORTANT: Must match the Playwright Docker image version
+playwright==1.49.0

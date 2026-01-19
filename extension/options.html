@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Legal List Extractor — Options</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Options</h1>
+      <p>Configure where extracted data is sent.</p>
+
+      <div class="card">
+        <label>
+          Backend endpoint (POST)
+          <input id="endpoint" type="text" placeholder="https://api.yourdomain.com/api/v1/extractions" />
+        </label>
+
+        <label>
+          API key (sent as X-API-Key)
+          <input id="apiKey" type="password" placeholder="dev-key-change-me" />
+        </label>
+
+        <label class="chk">
+          <input id="autoSend" type="checkbox" />
+          Auto-send to backend after each extraction
+        </label>
+
+        <div class="row">
+          <button id="btnSave">Save</button>
+          <span id="status" class="status"></span>
+        </div>
+
+        <details>
+          <summary>Notes</summary>
+          <ul>
+            <li>If you change the backend domain, update <code>host_permissions</code> in <code>manifest.json</code>.</li>
+            <li>For production, use HTTPS and a scoped API key.</li>
+          </ul>
+        </details>
+      </div>
+    </main>
+
+    <script src="options.js"></script>
+  </body>
+</html>
