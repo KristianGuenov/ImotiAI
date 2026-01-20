@@ -26,8 +26,8 @@ services:
   scraper:
     profiles: ["scrape"]
     build:
-      context: .
-      dockerfile: scraper/Dockerfile
+      context: ./scraper
+      dockerfile: Dockerfile
     environment:
       # Index runner uses this endpoint
       API_ENDPOINT: http://api:8787/api/v1/extractions
@@ -57,8 +57,8 @@ services:
   detail_scheduler:
     profiles: ["schedule"]
     build:
-      context: .
-      dockerfile: scraper/Dockerfile
+      context: ./scraper
+      dockerfile: Dockerfile
     environment:
       API_BASE: http://api:8787
       API_KEY: ${API_KEY}

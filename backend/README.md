@@ -41,10 +41,10 @@ uvicorn app.main:app --reload --port 8787
 
 
 Real estate websites:
-Imot bg 
-Imoti.net
-Imoti.info
-Bazar.bg Real Estate
+Imot bg     OK
+Imoti.net.  OK
+Imoti.info. OK
+Bazar.bg Real Estate. OK
 Holmes.bg 
 Imoteka.bg
 Address.bg

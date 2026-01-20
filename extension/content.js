@@ -3,6 +3,49 @@
   "use strict";
 
   // ---------------------------------------------------------------------------
+  // Chrome API compatibility (Extension vs Playwright)
+  //
+  // In Playwright / non-extension contexts, `chrome` is not defined, which will
+  // crash this file because it uses chrome.storage and chrome.runtime messaging.
+  //
+  // We create a LOCAL `var chrome` binding that:
+  //  - Uses the real API in extensions
+  //  - Falls back to a harmless stub in Playwright
+  // ---------------------------------------------------------------------------
+
+  var chrome = (typeof globalThis !== "undefined" && globalThis.chrome) ? globalThis.chrome : undefined;
+  if (!chrome) chrome = {};
+  chrome.runtime = chrome.runtime || {};
+  chrome.runtime.onMessage = chrome.runtime.onMessage || { addListener: function () {} };
+  chrome.runtime.sendMessage = chrome.runtime.sendMessage || function () {};
+  chrome.storage = chrome.storage || {};
+  chrome.storage.sync = chrome.storage.sync || {};
+  chrome.storage.sync.get =
+    chrome.storage.sync.get ||
+    function (keys, cb) {
+      try {
+        // Common extension pattern: get({defaults}, cb) -> return defaults
+        if (typeof cb === "function") {
+          if (keys && typeof keys === "object" && !Array.isArray(keys)) cb(keys);
+          else cb({});
+        }
+      } catch (_) {}
+    };
+  chrome.storage.sync.set =
+    chrome.storage.sync.set ||
+    function (_obj, cb) {
+      try {
+        if (typeof cb === "function") cb();
+      } catch (_) {}
+    };
+
+  // Guard to avoid double injection when Playwright uses add_init_script + add_script_tag fallback.
+  if (typeof window !== "undefined") {
+    if (window.__realEstateExtractorInjected) return;
+    window.__realEstateExtractorInjected = true;
+  }
+
+  // ---------------------------------------------------------------------------
   // Utilities
   // ---------------------------------------------------------------------------
 
@@ -48,6 +91,7 @@
   class SiteOverrides {
     static getAll() {
       return new Promise((resolve) => {
+        // Safe in Playwright due to stub
         chrome.storage.sync.get({ siteOverrides: {} }, (items) => resolve(items.siteOverrides || {}));
       });
     }
@@ -58,7 +102,7 @@
   }
 
   function nowMs() {
-    return (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+    return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
   }
 
   function tryUrl(href) {
@@ -79,19 +123,11 @@
   }
 
   function chooseListingLinkPatternFromPage() {
-    const patterns = [
-      "/obiava/",
-      "/offer/",
-      "/listing/",
-      "/ad/",
-      "/property/",
-      "/imot/",
-      "/annonce/",
-      "/objava/",
-    ];
+    const patterns = ["/obiava/", "/offer/", "/listing/", "/ad/", "/property/", "/imot/", "/annonce/", "/objava/"];
 
-    const anchors = Array.from(document.querySelectorAll("a[href]"))
-      .filter((a) => a.href && !a.href.endsWith("#") && !isProbablyFooterOrNav(a));
+    const anchors = Array.from(document.querySelectorAll("a[href]")).filter(
+      (a) => a.href && !a.href.endsWith("#") && !isProbablyFooterOrNav(a)
+    );
 
     const counts = {};
     for (const p of patterns) counts[p] = 0;
@@ -121,16 +157,7 @@
   }
 
   function pickStableClasses(el, max = 2) {
-    const ignore = [
-      "active",
-      "selected",
-      "hover",
-      "focus",
-      "open",
-      "closed",
-      "current",
-      "ng-star-inserted",
-    ];
+    const ignore = ["active", "selected", "hover", "focus", "open", "closed", "current", "ng-star-inserted"];
     const out = [];
     for (const c of Array.from(el.classList || [])) {
       const lc = c.toLowerCase();
@@ -524,24 +551,110 @@
   }
 
   class LoadMore {
+    static _isVisible(el) {
+      if (!(el instanceof Element)) return false;
+      const r = el.getBoundingClientRect();
+      if (!r || r.width < 20 || r.height < 14) return false;
+      const s = window.getComputedStyle(el);
+      if (s.display === "none" || s.visibility === "hidden" || s.opacity === "0") return false;
+      return true;
+    }
+
+    static _findLoadMoreButton() {
+      const nodes = Array.from(document.querySelectorAll("button, a[href], [role='button']"));
+      const good = [];
+
+      for (const el of nodes) {
+        if (!LoadMore._isVisible(el)) continue;
+
+        const disabled = el.hasAttribute("disabled") || el.getAttribute("aria-disabled") === "true";
+        if (disabled) continue;
+
+        const t = DomText.normalize(el.textContent).toLowerCase();
+        const aria = DomText.normalize(el.getAttribute("aria-label")).toLowerCase();
+        const title = DomText.normalize(el.getAttribute("title")).toLowerCase();
+        const cls = (el.className || "").toString().toLowerCase();
+
+        // Positive "load more" signals (EN + BG)
+        const pos =
+          t.includes("load more") ||
+          t.includes("show more") ||
+          t.includes("more results") ||
+          t.includes("покажи още") ||
+          t.includes("виж още") ||
+          t.includes("още") ||
+          t.includes("зареди") ||
+          aria.includes("покажи още") ||
+          aria.includes("виж още") ||
+          aria.includes("load more") ||
+          title.includes("покажи още") ||
+          title.includes("виж още") ||
+          cls.includes("load-more") ||
+          cls.includes("show-more");
+
+        if (!pos) continue;
+
+        // Negative: avoid "next page" buttons
+        const neg =
+          t.includes("next") ||
+          t.includes("следва") ||
+          t === ">" ||
+          t === "»" ||
+          aria.includes("next") ||
+          aria.includes("следва");
+        if (neg) continue;
+
+        let score = 0;
+        if (t.includes("load more") || t.includes("покажи още") || t.includes("виж още")) score += 10;
+        if (cls.includes("load-more") || cls.includes("show-more")) score += 4;
+        if (el.closest(".pagination, nav, [aria-label*='page']")) score -= 2;
+
+        good.push({ el, score });
+      }
+
+      good.sort((a, b) => b.score - a.score);
+      return good[0]?.el || null;
+    }
+
+    static _candidateCount(cand) {
+      if (!cand) return 0;
+      // IMPORTANT: don't rely on cand.items (capped at 80). Use real container child count.
+      try {
+        const kids = Array.from(cand.container?.children || []).filter((x) => x instanceof Element);
+        return kids.length || (cand.items?.length || 0);
+      } catch (_) {
+        return cand.items?.length || 0;
+      }
+    }
+
     static async run(options = {}) {
       const scrollSteps = Math.max(1, Math.min(200, Number(options.scrollSteps || 12)));
       const idleCycles = Math.max(1, Math.min(10, Number(options.idleCycles || 2)));
       const stepDelayMs = Math.max(200, Math.min(6000, Number(options.stepDelayMs || 800)));
 
       const detector = new ListDetector();
-      const cand = detector.detect();
-      const getCount = () => cand?.items?.length || 0;
-
-      let prevCount = getCount();
+      let cand = detector.detect();
+      let prevCount = LoadMore._candidateCount(cand);
       let idle = 0;
 
       for (let i = 0; i < scrollSteps; i++) {
-        window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
+        // Prefer clicking a "load more" control if present
+        const btn = LoadMore._findLoadMoreButton();
+        if (btn) {
+          try {
+            btn.scrollIntoView({ block: "center" });
+            btn.click();
+          } catch (_) {
+            // ignore, fallback to scroll
+          }
+        } else {
+          window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
+        }
+
         await new Promise((r) => setTimeout(r, stepDelayMs));
 
-        const cand2 = detector.detect();
-        const count = cand2?.items?.length || prevCount;
+        cand = detector.detect();
+        const count = LoadMore._candidateCount(cand);
 
         if (count > prevCount) {
           prevCount = count;
@@ -670,8 +783,9 @@
 
       const listingLinkPattern = chooseListingLinkPatternFromPage();
 
-      const allAnchors = Array.from(document.querySelectorAll("a[href]"))
-        .filter((a) => a.href && !a.href.endsWith("#") && !isProbablyFooterOrNav(a));
+      const allAnchors = Array.from(document.querySelectorAll("a[href]")).filter(
+        (a) => a.href && !a.href.endsWith("#") && !isProbablyFooterOrNav(a)
+      );
 
       const matchingAnchors = listingLinkPattern
         ? allAnchors.filter((a) => {
@@ -788,9 +902,11 @@
       e.preventDefault();
       e.stopPropagation();
 
-      const clicked = this._lastEl || (document.elementFromPoint(e.clientX, e.clientY) instanceof Element
-        ? document.elementFromPoint(e.clientX, e.clientY)
-        : null);
+      const clicked =
+        this._lastEl ||
+        (document.elementFromPoint(e.clientX, e.clientY) instanceof Element
+          ? document.elementFromPoint(e.clientX, e.clientY)
+          : null);
 
       if (!(clicked instanceof Element)) {
         this.stop();
@@ -823,6 +939,7 @@
       if (!listingLinkPattern) listingLinkPattern = chooseListingLinkPatternFromPage();
       if (!sampleListingHref) sampleListingHref = firstNonEmpty(anchors.map((a) => a.href));
 
+      // Safe in Playwright due to stub
       chrome.runtime.sendMessage({
         type: "PICKER_RESULT",
         result: {
@@ -842,7 +959,46 @@
   const picker = new Picker();
 
   // ---------------------------------------------------------------------------
-  // Messaging
+  // ✅ Playwright runner integration:
+  // Expose a window API so Python can call run/navigate/loadMore directly.
+  // This is the missing piece that causes Page.wait_for_function timeouts.
+  // ---------------------------------------------------------------------------
+
+  if (typeof window !== "undefined") {
+    window.__imotiExtractor = window.__imotiExtractor || {
+      // must return {ok:true,result:{...}} or {ok:false,error:"..."}
+      run: async () => {
+        const runner = new ExtractionRunner();
+        return await runner.run();
+      },
+      // must return boolean
+      navigateNext: async () => {
+        return await Navigation.navigateNext();
+      },
+      // runner doesn't care about return, but keep consistent
+      loadMore: async (options = {}) => {
+        await LoadMore.run(options || {});
+        return true;
+      },
+      loadMoreThenExtract: async (options = {}) => {
+        await LoadMore.run(options || {});
+        const runner = new ExtractionRunner();
+        return await runner.run();
+      },
+      onboardSite: () => Onboarding.run(),
+      startPicker: () => {
+        picker.start();
+        return { ok: true, started: true };
+      },
+      stopPicker: () => {
+        picker.stop();
+        return { ok: true, stopped: true };
+      },
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Messaging (Chrome extension sidepanel/popup)
   // ---------------------------------------------------------------------------
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {

@@ -5,31 +5,28 @@ import os
 import random
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 import yaml
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page
+from playwright.async_api import async_playwright, Browser, BrowserContext, Page, TimeoutError as PlaywrightTimeoutError
+
+
+def utc_now_iso() -> str:
+    # UTC timestamp in ISO-8601 format
+    return datetime.now(timezone.utc).isoformat()
 
 
 # -----------------------------
 # Data model
 # -----------------------------
 
+
 @dataclass(frozen=True)
 class ScrapeTarget:
-    """
-    One URL target to scrape.
+    """One target to scrape."""
 
-    mode:
-      - "pagination": extract -> next -> repeat (max_pages)
-      - "load_more_then_extract": load more (scroll) -> extract once
-      - "extract_once": just extract current page once
-
-    post_strategy:
-      - "per_page": POST every page as a separate extraction (current behavior)
-      - "per_target": merge all pages and POST once (fastest, avoids huge ID jumps)
-    """
     name: str
     url: str
     mode: str = "extract_once"
@@ -46,19 +43,23 @@ class ScrapeTarget:
     timeout_ms: int = 45_000
 
     # posting behavior
+    # - per_page: POST each page
+    # - per_target: dedupe across pages and POST in batches (see post_batch_pages)
     post_strategy: str = "per_page"
+
+    # If post_strategy == per_target and mode == pagination:
+    # POST one batch per N pages (0 disables batching and posts once at end).
+    post_batch_pages: int = 50
 
 
 class TargetsLoader:
-    """
-    Loads ScrapeTarget entries from a YAML file.
-    """
     def __init__(self, targets_file: str):
         self.targets_file = targets_file
 
     def load(self) -> List[ScrapeTarget]:
         with open(self.targets_file, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f) or []
+
         if not isinstance(raw, list):
             raise ValueError("targets.yml must contain a YAML list of targets")
 
@@ -83,6 +84,7 @@ class TargetsLoader:
                     wait_until=str(item.get("wait_until") or "domcontentloaded"),
                     timeout_ms=int(item.get("timeout_ms") or 45_000),
                     post_strategy=str(item.get("post_strategy") or "per_page").strip(),
+                    post_batch_pages=int(item.get("post_batch_pages") or 50),
                 )
             )
 
@@ -93,13 +95,8 @@ class TargetsLoader:
 # API posting
 # -----------------------------
 
+
 class ApiClient:
-    """
-    Posts extracted payloads to your existing FastAPI endpoint:
-      POST /api/v1/extractions
-    with header:
-      x-api-key: <API_KEY>
-    """
     def __init__(self, endpoint: str, api_key: str, timeout_s: float = 60.0):
         self.endpoint = endpoint
         self.api_key = api_key
@@ -111,13 +108,21 @@ class ApiClient:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
+        # Best-effort close.
+        #
+        # When the process is interrupted (Ctrl+C / SIGTERM), asyncio may already be
+        # shutting down while httpx/anyio tries to close transports. In that case you can
+        # get noisy secondary exceptions like `anyio.NoEventLoopError`.
         if self._client is not None:
-            await self._client.aclose()
+            try:
+                await self._client.aclose()
+            except Exception:
+                pass
             self._client = None
 
     async def post_extraction(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         if self._client is None:
-            raise RuntimeError("ApiClient not initialized (use 'async with ApiClient(...)')")
+            raise RuntimeError("ApiClient not initialized")
 
         headers = {
             "content-type": "application/json",
@@ -134,19 +139,8 @@ class ApiClient:
 # Playwright scraping
 # -----------------------------
 
+
 class PlaywrightExtractor:
-    """
-    Opens pages with Playwright, injects your content.js,
-    calls window.__imotiExtractor.*, and posts results to API.
-
-    Enhancements:
-      - pagination stop early if signature repeats
-      - post_strategy:
-          * per_page: POST each page
-          * per_target: merge pages and POST once
-      - avoids duplicate POSTs across retries using a shared posted-signature set
-    """
-
     _BLOCKED_URL_PARTS = (
         "doubleclick.net",
         "googlesyndication.com",
@@ -193,13 +187,73 @@ class PlaywrightExtractor:
             "Chrome/120.0.0.0 Safari/537.36"
         )
 
-        ctx = await browser.new_context(
+        # Create a fresh context. We try to disable service workers because some sites
+        # register SW/worker scripts that reference `chrome.*` and crash in headless.
+        # (Blocking SWs also improves determinism and performance for scraping.)
+        ctx_kwargs = dict(
             user_agent=ua,
             viewport={"width": 1365, "height": 900},
             java_script_enabled=True,
             locale="bg-BG",
             ignore_https_errors=True,
             bypass_csp=True,
+        )
+        try:
+            ctx = await browser.new_context(**ctx_kwargs, service_workers="block")
+        except TypeError:
+            # Older Playwright
+            ctx = await browser.new_context(**ctx_kwargs)
+
+        # Some sites (and some extension-originated scripts) reference `chrome.*` directly.
+        # In Playwright there is NO extension API, so `chrome` is often undefined which can crash page JS
+        # and prevent our extractor from booting.
+        #
+        # We install a minimal, harmless stub that:
+        #   - defines the global identifier `chrome`
+        #   - defines window.chrome
+        #   - provides no-op runtime/onMessage + storage.sync.get/set
+        #
+        # This is ONLY for scraping; in a real extension context Chrome provides the real API.
+        # Robust `chrome` stub.
+        # NOTE: we also use an *indirect eval* to create a true global `var chrome` binding
+        # in case site scripts reference the identifier `chrome` very early.
+        await ctx.add_init_script(
+            script=(
+                "(() => {\n"
+                "  try {\n"
+                "    const g = globalThis;\n"
+                "    g.chrome = g.chrome || {};\n"
+                "    try { (0, eval)(\"if (typeof chrome === 'undefined') { var chrome = globalThis.chrome; }\"); } catch(e) {}\n"
+                "    if (typeof window !== 'undefined') window.chrome = g.chrome;\n"
+                "    const c = g.chrome;\n"
+                "    c.runtime = c.runtime || {};\n"
+                "    c.runtime.id = c.runtime.id || '';\n"
+                "    c.runtime.lastError = c.runtime.lastError || null;\n"
+                "    c.runtime.getURL = c.runtime.getURL || (p => String(p || ''));\n"
+                "    c.runtime.onMessage = c.runtime.onMessage || { addListener: function(){} };\n"
+                "    c.runtime.sendMessage = c.runtime.sendMessage || function(){ };\n"
+                "    c.storage = c.storage || {};\n"
+                "    const mkArea = (area) => {\n"
+                "      area.get = area.get || function(keys, cb){\n"
+                "        try {\n"
+                "          if (typeof cb === 'function') {\n"
+                "            if (keys && typeof keys === 'object' && !Array.isArray(keys)) cb(keys); else cb({});\n"
+                "          }\n"
+                "        } catch(e) {}\n"
+                "      };\n"
+                "      area.set = area.set || function(_obj, cb){ try { if (typeof cb === 'function') cb(); } catch(e) {} };\n"
+                "      area.remove = area.remove || function(_keys, cb){ try { if (typeof cb === 'function') cb(); } catch(e) {} };\n"
+                "      area.clear = area.clear || function(cb){ try { if (typeof cb === 'function') cb(); } catch(e) {} };\n"
+                "      return area;\n"
+                "    };\n"
+                "    c.storage.sync = mkArea(c.storage.sync || {});\n"
+                "    c.storage.local = mkArea(c.storage.local || {});\n"
+                "    c.i18n = c.i18n || {};\n"
+                "    c.i18n.getMessage = c.i18n.getMessage || function(){ return ''; };\n"
+                "    c.app = c.app || { isInstalled: false };\n"
+                "  } catch (_) {}\n"
+                "})();\n"
+            )
         )
 
         # Inject extractor at document-start for every navigation
@@ -227,17 +281,46 @@ class PlaywrightExtractor:
         if await _has():
             return
 
-        # Fallback injection
+        # Fallback injection (in case init_script didn't run).
+        # We try multiple strategies because some pages have CSP oddities.
         script = self._load_content_script()
+        injected = False
         try:
             await page.add_script_tag(content=script)
+            injected = True
         except Exception:
-            pass
+            injected = False
 
-        await page.wait_for_function(
-            "() => !!(window.__imotiExtractor && window.__imotiExtractor.run)",
-            timeout=12_000,
-        )
+        if not injected:
+            # As a last resort, run via indirect eval in the page global scope.
+            try:
+                await page.evaluate(
+                    "(code) => { try { (0, eval)(code); return true; } catch(e) { return String(e); } }", script
+                )
+            except Exception:
+                pass
+
+        try:
+            await page.wait_for_function(
+                "() => !!(window.__imotiExtractor && window.__imotiExtractor.run)",
+                timeout=30_000,
+            )
+        except PlaywrightTimeoutError:
+            # Capture a small diagnostic snapshot to make failures actionable.
+            try:
+                diag = await page.evaluate(
+                    """() => ({
+                      url: location.href,
+                      readyState: document.readyState,
+                      hasExtractor: !!(window.__imotiExtractor && window.__imotiExtractor.run),
+                      injectedFlag: !!window.__realEstateExtractorInjected,
+                      chromeType: (typeof chrome),
+                      hasWindowChrome: (typeof window !== 'undefined' && !!window.chrome)
+                    })"""
+                )
+            except Exception:
+                diag = {"url": getattr(page, "url", None), "note": "failed to eval diag"}
+            raise RuntimeError(f"Extractor not initialized (timeout). Diagnostic: {diag}")
 
     async def _extract(self, page: Page) -> Dict[str, Any]:
         await self._ensure_extractor(page)
@@ -263,13 +346,57 @@ class PlaywrightExtractor:
         await page.evaluate("(opts) => window.__imotiExtractor.loadMore(opts || {})", options or {})
 
     def _attach_debug_listeners(self, page: Page, target_name: str) -> None:
-        page.on("pageerror", lambda exc: print(f"[pageerror] {target_name}: {exc}"))
+        # Page-level JS exceptions. Print message + stack when available.
+        def _on_pageerror(exc):
+            try:
+                msg = getattr(exc, "message", None) or str(exc)
+                stack = getattr(exc, "stack", None)
+                if stack:
+                    print(f"[pageerror] {target_name}: {msg}\n{stack}")
+                else:
+                    print(f"[pageerror] {target_name}: {msg}")
+            except Exception:
+                print(f"[pageerror] {target_name}: {exc}")
+
+        page.on("pageerror", _on_pageerror)
 
         def _console_handler(msg):
             if self.log_console_noise and msg.type in ("error", "warning"):
-                print(f"[console:{msg.type}] {target_name}: {msg.text}")
+                # Include location when available to pinpoint failing scripts.
+                try:
+                    loc = msg.location
+                    if loc and loc.get("url"):
+                        print(
+                            f"[console:{msg.type}] {target_name}: {msg.text} "
+                            f"({loc.get('url')}:{loc.get('lineNumber')}:{loc.get('columnNumber')})"
+                        )
+                    else:
+                        print(f"[console:{msg.type}] {target_name}: {msg.text}")
+                except Exception:
+                    print(f"[console:{msg.type}] {target_name}: {msg.text}")
 
         page.on("console", _console_handler)
+
+        # Best-effort: stub `chrome` in web workers too (context init scripts do NOT run there).
+        # This won't save a worker that throws *before* we attach, but it reduces noise on sites
+        # where workers reference chrome after startup.
+        def _on_worker(worker):
+            async def _init_worker():
+                try:
+                    await worker.evaluate("(() => { try { globalThis.chrome = globalThis.chrome || {}; } catch(e) {} })();")
+                except Exception:
+                    pass
+
+            try:
+                asyncio.create_task(_init_worker())
+            except Exception:
+                pass
+
+        try:
+            page.on("worker", _on_worker)
+        except Exception:
+            # Some Playwright versions might not support this event.
+            pass
 
     def _page_signature(self, extracted_payload: Dict[str, Any], max_urls: int = 15) -> str:
         items = extracted_payload.get("items") if isinstance(extracted_payload, dict) else None
@@ -289,10 +416,6 @@ class PlaywrightExtractor:
         return "|".join(urls) if urls else "no-urls"
 
     def _item_key(self, item: Dict[str, Any]) -> str:
-        """
-        Key for item dedupe when merging pages.
-        Prefer URL, fall back to title+rawText.
-        """
         u = item.get("url")
         if isinstance(u, str) and u:
             return f"url::{u}"
@@ -306,12 +429,10 @@ class PlaywrightExtractor:
         target: ScrapeTarget,
         browser: Browser,
         posted_signatures: Optional[set] = None,
+        seen_item_keys: Optional[set] = None,
     ) -> Tuple[int, int, Optional[int]]:
-        """
-        Returns:
-          (pages_visited, posts_done, last_extraction_id)
-        """
         posted_signatures = posted_signatures if posted_signatures is not None else set()
+        seen_item_keys = seen_item_keys if seen_item_keys is not None else set()
 
         ctx = await self._new_context(browser)
         page = await ctx.new_page()
@@ -330,14 +451,13 @@ class PlaywrightExtractor:
             if target.mode == "extract_once":
                 payload = await self._extract(page)
                 sig = self._page_signature(payload)
-
                 if sig not in posted_signatures:
                     resp = await api.post_extraction(payload)
                     last_id = resp.get("id") if isinstance(resp, dict) else last_id
                     posts_done += 1
                     posted_signatures.add(sig)
-
                 pages_visited = 1
+                print(f"[{target.name}] page=1 items={len(payload.get('items') or [])} posted={posts_done}")
                 return pages_visited, posts_done, last_id
 
             if target.mode == "load_more_then_extract":
@@ -345,113 +465,207 @@ class PlaywrightExtractor:
                 await page.wait_for_timeout(int(max(300, min(5000, target.delay_ms))))
                 payload = await self._extract(page)
                 sig = self._page_signature(payload)
-
                 if sig not in posted_signatures:
                     resp = await api.post_extraction(payload)
                     last_id = resp.get("id") if isinstance(resp, dict) else last_id
                     posts_done += 1
                     posted_signatures.add(sig)
-
                 pages_visited = 1
+                print(f"[{target.name}] page=1(load_more) items={len(payload.get('items') or [])} posted={posts_done}")
                 return pages_visited, posts_done, last_id
 
             # Pagination mode
-            if target.mode == "pagination":
-                max_pages = max(1, min(20000, int(target.max_pages)))
-                delay_ms = max(0, min(20_000, int(target.delay_ms)))
+            if target.mode != "pagination":
+                raise ValueError(f"Unknown mode '{target.mode}' for target '{target.name}'")
 
-                # loop detection in THIS attempt
-                seen_this_attempt: set = set()
+            max_pages = max(1, min(20000, int(target.max_pages)))
+            delay_ms = max(0, min(20_000, int(target.delay_ms)))
 
-                # merge buffers for per_target
-                merged_payload: Optional[Dict[str, Any]] = None
-                merged_items: Dict[str, Dict[str, Any]] = {}
-                page_urls: List[str] = []
+            post_strategy = (target.post_strategy or "per_page").lower().strip()
+            if post_strategy not in ("per_page", "per_target"):
+                post_strategy = "per_page"
 
-                post_strategy = (target.post_strategy or "per_page").lower().strip()
-                if post_strategy not in ("per_page", "per_target"):
-                    post_strategy = "per_page"
+            batch_every = int(target.post_batch_pages or 50)
+            batch_every = max(0, min(5000, batch_every))
 
-                for _ in range(max_pages):
-                    payload = await self._extract(page)
-                    pages_visited += 1
+            # Loop detection in THIS attempt
+            seen_this_attempt: set = set()
 
-                    sig = self._page_signature(payload)
-                    page_urls.append(page.url)
+            # Batch buffers (per_target)
+            base_payload: Optional[Dict[str, Any]] = None
+            batch_items: Dict[str, Dict[str, Any]] = {}
+            batch_page_urls: List[str] = []
+            batch_pages = 0
+            batch_index = 0
 
-                    # Stop if we’re looping / last page
-                    if sig in seen_this_attempt:
-                        break
-                    seen_this_attempt.add(sig)
+            async def flush_batch(reason: str) -> None:
+                nonlocal posts_done, last_id, batch_items, batch_page_urls, batch_pages, batch_index, base_payload
 
-                    # If we already posted/merged this signature (e.g., retry after crash),
-                    # skip posting/merging but still try to navigate next.
-                    if sig not in posted_signatures:
-                        if post_strategy == "per_page":
-                            resp = await api.post_extraction(payload)
-                            last_id = resp.get("id") if isinstance(resp, dict) else last_id
-                            posts_done += 1
+                if post_strategy != "per_target":
+                    return
 
-                        else:  # per_target
-                            if merged_payload is None:
-                                merged_payload = payload
-                                # make result represent the target, not just the current page
-                                merged_payload["sourceUrl"] = target.url
-                                merged_payload.setdefault("meta", {})
-                                merged_payload["meta"]["targetName"] = target.name
-                                merged_payload["meta"]["postStrategy"] = "per_target"
+                # If batching disabled, we'll post once at the end.
+                if batch_every <= 0:
+                    return
 
-                            items = payload.get("items") if isinstance(payload, dict) else None
-                            if isinstance(items, list):
-                                for it in items:
-                                    if isinstance(it, dict):
-                                        merged_items[self._item_key(it)] = it
+                if not batch_items:
+                    batch_page_urls = []
+                    batch_pages = 0
+                    return
 
-                        posted_signatures.add(sig)
+                if base_payload is None:
+                    base_payload = {"sourceUrl": target.url, "extractedAt": utc_now_iso(), "items": [], "meta": {}}
 
-                    did_nav = await self._navigate_next(page)
-                    if not did_nav:
-                        break
+                payload_to_post = json.loads(json.dumps(base_payload, ensure_ascii=False))
+                payload_to_post["sourceUrl"] = target.url
+                payload_to_post["extractedAt"] = utc_now_iso()
+                payload_to_post["items"] = list(batch_items.values())
 
-                    try:
-                        await page.wait_for_load_state("domcontentloaded", timeout=target.timeout_ms)
-                    except Exception:
-                        pass
-                    await page.wait_for_timeout(500)
-                    await self._ensure_extractor(page)
+                meta = dict(payload_to_post.get("meta") or {})
+                meta.update(
+                    {
+                        "targetName": target.name,
+                        "postStrategy": "per_target_batched",
+                        "batchIndex": batch_index,
+                        "batchPages": batch_pages,
+                        "batchPageUrls": list(batch_page_urls),
+                        "pagesVisitedSoFar": pages_visited,
+                        "uniqueItemsTotalSoFar": len(seen_item_keys),
+                        "flushReason": reason,
+                    }
+                )
+                payload_to_post["meta"] = meta
 
-                    if delay_ms:
-                        jitter = random.randint(0, min(600, delay_ms))
-                        await page.wait_for_timeout(delay_ms + jitter)
+                resp = await api.post_extraction(payload_to_post)
+                last_id = resp.get("id") if isinstance(resp, dict) else last_id
+                posts_done += 1
 
-                # If per_target, POST once at the end
-                if post_strategy == "per_target" and merged_payload is not None:
-                    merged_payload["items"] = list(merged_items.values())
-                    merged_payload.setdefault("meta", {})
-                    merged_payload["meta"]["pageUrls"] = page_urls
-                    merged_payload["meta"]["pagesVisited"] = pages_visited
+                print(
+                    f"[{target.name}] BATCH_POST idx={batch_index} pages={batch_pages} "
+                    f"items={len(batch_items)} unique_total={len(seen_item_keys)} last_id={last_id} ({reason})"
+                )
 
-                    resp = await api.post_extraction(merged_payload)
-                    last_id = resp.get("id") if isinstance(resp, dict) else last_id
-                    posts_done += 1
+                batch_index += 1
+                batch_items = {}
+                batch_page_urls = []
+                batch_pages = 0
 
-                return pages_visited, posts_done, last_id
+            for _ in range(max_pages):
+                payload = await self._extract(page)
+                pages_visited += 1
 
-            raise ValueError(f"Unknown mode '{target.mode}' for target '{target.name}'")
+                items_list = payload.get("items") if isinstance(payload, dict) else None
+                item_count = len(items_list) if isinstance(items_list, list) else 0
+
+                sig = self._page_signature(payload)
+
+                if sig in seen_this_attempt:
+                    print(f"[{target.name}] STOP loop_detected page={pages_visited} url={page.url}")
+                    break
+                seen_this_attempt.add(sig)
+
+                new_items_this_page = 0
+
+                if sig not in posted_signatures:
+                    if post_strategy == "per_page":
+                        resp = await api.post_extraction(payload)
+                        last_id = resp.get("id") if isinstance(resp, dict) else last_id
+                        posts_done += 1
+
+                    else:  # per_target
+                        if base_payload is None:
+                            base_payload = payload
+
+                        if isinstance(items_list, list):
+                            for it in items_list:
+                                if not isinstance(it, dict):
+                                    continue
+                                k = self._item_key(it)
+                                if k in seen_item_keys:
+                                    continue
+                                seen_item_keys.add(k)
+                                new_items_this_page += 1
+
+                                if batch_every > 0:
+                                    batch_items[k] = it
+                                else:
+                                    # no batching: store everything in memory and post once at end
+                                    batch_items[k] = it
+
+                        batch_page_urls.append(page.url)
+                        batch_pages += 1
+
+                    posted_signatures.add(sig)
+                else:
+                    print(
+                        f"[{target.name}] SKIP already_processed page={pages_visited}/{max_pages} "
+                        f"items={item_count} url={page.url}"
+                    )
+
+                if post_strategy == "per_target":
+                    print(
+                        f"[{target.name}] page={pages_visited}/{max_pages} items={item_count} "
+                        f"new_unique={new_items_this_page} unique_total={len(seen_item_keys)} "
+                        f"batch_pages={batch_pages} batch_items={len(batch_items)} url={page.url}"
+                    )
+                else:
+                    print(
+                        f"[{target.name}] page={pages_visited}/{max_pages} items={item_count} "
+                        f"posted_pages={posts_done} last_id={last_id} url={page.url}"
+                    )
+
+                if post_strategy == "per_target" and batch_every > 0 and batch_pages >= batch_every:
+                    await flush_batch(reason=f"reached_{batch_every}_pages")
+
+                did_nav = await self._navigate_next(page)
+                if not did_nav:
+                    print(f"[{target.name}] STOP no_next page={pages_visited} url={page.url}")
+                    break
+
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=target.timeout_ms)
+                except Exception:
+                    pass
+
+                await page.wait_for_timeout(500)
+                await self._ensure_extractor(page)
+
+                if delay_ms:
+                    jitter = random.randint(0, min(600, delay_ms))
+                    await page.wait_for_timeout(delay_ms + jitter)
+
+            # Final post for per_target
+            if post_strategy == "per_target":
+                if batch_every > 0:
+                    await flush_batch(reason="final")
+                else:
+                    # One huge POST at end (not recommended for 900 pages, but supported)
+                    if base_payload is not None:
+                        merged = json.loads(json.dumps(base_payload, ensure_ascii=False))
+                        merged["sourceUrl"] = target.url
+                        merged["extractedAt"] = utc_now_iso()
+                        merged["items"] = list(batch_items.values())
+                        meta = dict(merged.get("meta") or {})
+                        meta.update(
+                            {
+                                "targetName": target.name,
+                                "postStrategy": "per_target",
+                                "pagesVisited": pages_visited,
+                                "uniqueItems": len(batch_items),
+                            }
+                        )
+                        merged["meta"] = meta
+                        resp = await api.post_extraction(merged)
+                        last_id = resp.get("id") if isinstance(resp, dict) else last_id
+                        posts_done += 1
+
+            return pages_visited, posts_done, last_id
 
         finally:
             await ctx.close()
 
 
-
-
-
-
 class ScrapeRunner:
-    """
-    Orchestrates loading targets and running them with a single browser instance.
-    Includes relaunch/retry if Chromium crashes (TargetClosedError scenarios).
-    """
     def __init__(
         self,
         targets_file: str,
@@ -469,8 +683,9 @@ class ScrapeRunner:
         self.loader = TargetsLoader(targets_file)
         self.extractor = PlaywrightExtractor(content_script_path=content_script_path, headless=headless)
 
-        # ✅ keep signatures per target across retries in this run
+        # Keep state per target across a retry in the same run
         self._posted_sigs_by_target: Dict[str, set] = {}
+        self._seen_item_keys_by_target: Dict[str, set] = {}
 
     async def _launch_browser(self, p) -> Browser:
         args = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
@@ -488,7 +703,7 @@ class ScrapeRunner:
                 try:
                     browser = await self._launch_browser(p)
                 except Exception as e:
-                    print(f"❌ Failed to launch browser: {e}")
+                    print(f"Failed to launch browser: {e}")
                     return 0
 
                 ok = 0
@@ -496,27 +711,38 @@ class ScrapeRunner:
                     for t in targets:
                         print(f"\n=== {t.name} ===")
                         print(f"URL: {t.url}")
-                        print(f"Mode: {t.mode} | post_strategy: {t.post_strategy}")
+                        print(
+                            f"Mode: {t.mode} | post_strategy: {t.post_strategy} | "
+                            f"post_batch_pages: {t.post_batch_pages}"
+                        )
 
                         if browser is None or not browser.is_connected():
                             try:
                                 browser = await self._launch_browser(p)
                             except Exception as e:
-                                print(f"❌ Browser relaunch failed: {e}")
+                                print(f"Browser relaunch failed: {e}")
                                 continue
 
                         posted = self._posted_sigs_by_target.setdefault(t.name, set())
+                        seen_keys = self._seen_item_keys_by_target.setdefault(t.name, set())
 
                         try:
                             pages_visited, posts_done, last_id = await self.extractor.scrape_target(
-                                api, t, browser, posted_signatures=posted
+                                api,
+                                t,
+                                browser,
+                                posted_signatures=posted,
+                                seen_item_keys=seen_keys,
                             )
                             ok += 1
-                            print(f"✅ pages_visited={pages_visited} posts_done={posts_done} last_extraction_id={last_id}")
+                            print(
+                                f"DONE target={t.name} pages_visited={pages_visited} posts_done={posts_done} "
+                                f"last_extraction_id={last_id}"
+                            )
                         except Exception as e:
                             msg = str(e)
                             if "Target page, context or browser has been closed" in msg:
-                                print("⚠️ Browser closed/crashed. Relaunching and retrying once...")
+                                print("Browser closed/crashed. Relaunching and retrying once...")
                                 try:
                                     try:
                                         await browser.close()
@@ -525,14 +751,21 @@ class ScrapeRunner:
                                     browser = await self._launch_browser(p)
 
                                     pages_visited, posts_done, last_id = await self.extractor.scrape_target(
-                                        api, t, browser, posted_signatures=posted
+                                        api,
+                                        t,
+                                        browser,
+                                        posted_signatures=posted,
+                                        seen_item_keys=seen_keys,
                                     )
                                     ok += 1
-                                    print(f"✅ (retry) pages_visited={pages_visited} posts_done={posts_done} last_extraction_id={last_id}")
+                                    print(
+                                        f"DONE(retry) target={t.name} pages_visited={pages_visited} posts_done={posts_done} "
+                                        f"last_extraction_id={last_id}"
+                                    )
                                 except Exception as e2:
-                                    print(f"❌ failed target '{t.name}' after retry: {e2}")
+                                    print(f"FAILED target '{t.name}' after retry: {e2}")
                             else:
-                                print(f"❌ failed target '{t.name}': {e}")
+                                print(f"FAILED target '{t.name}': {e}")
 
                     return ok
                 finally:
@@ -543,17 +776,11 @@ class ScrapeRunner:
                             pass
 
 
-
-
-# -----------------------------
-# CLI entrypoint
-# -----------------------------
-
 async def _amain(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(description="Playwright scraper worker (posts to FastAPI /extractions).")
-    parser.add_argument("--targets", default=os.getenv("TARGETS_FILE", "/app/targets.yml"))
-    parser.add_argument("--content-script", default=os.getenv("CONTENT_SCRIPT_PATH", "/app/content.js"))
-    parser.add_argument("--endpoint", default=os.getenv("API_ENDPOINT", "http://api:8787/api/v1/extractions"))
+    parser.add_argument("--targets", default=os.getenv("TARGETS_FILE", "./targets.yml"))
+    parser.add_argument("--content-script", default=os.getenv("CONTENT_SCRIPT_PATH", "./content.js"))
+    parser.add_argument("--endpoint", default=os.getenv("API_ENDPOINT", "http://localhost:8787/api/v1/extractions"))
     parser.add_argument("--api-key", default=os.getenv("API_KEY", "dev-key-change-me"))
     parser.add_argument("--headful", action="store_true", help="Run with visible browser (debug)")
     args = parser.parse_args(argv)
@@ -565,6 +792,7 @@ async def _amain(argv: List[str]) -> int:
         api_key=args.api_key,
         headless=not args.headful,
     )
+
     ok = await runner.run_once()
     return 0 if ok > 0 else 2
 
