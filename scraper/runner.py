@@ -119,6 +119,7 @@ class PlaywrightExtractor:
         self.user_agent = user_agent
         self.log_console_noise = log_console_noise
         self._content_script_cache: Optional[str] = None
+        self._site_profiles_cache: Optional[str] = None
 
     def _load_content_script(self) -> str:
         if self._content_script_cache is not None:
@@ -133,55 +134,47 @@ class PlaywrightExtractor:
         return script
 
     def _load_site_profiles_script(self) -> str:
-        """
-        Load /app/site_profiles.json (written by the profile-sink) and inject overrides so content.js can read them
-        via chrome.storage.sync.get({siteOverrides:{}} ...).
+        """Load site_profiles.js if present.
 
-        Returns a JS init-script string (or "" if no overrides are available).
+        This lets the Playwright runner see the same site profile overrides
+        that you tune via the extension/sink pipeline.
         """
-        path = os.getenv("SITE_PROFILES_PATH", "/app/site_profiles.json")
-        if not os.path.exists(path):
+        if self._site_profiles_cache is not None:
+            return self._site_profiles_cache
+
+        candidates: List[str] = []
+        env_path = (os.getenv("SITE_PROFILES_JS") or "").strip()
+        if env_path:
+            candidates.append(env_path)
+        # Common relative locations depending on WORKDIR/bind mounts
+        candidates.extend([
+            "site_profiles.js",
+            os.path.join("scraper", "site_profiles.js"),
+        ])
+
+        path: Optional[str] = None
+        for c in candidates:
+            try:
+                if c and os.path.exists(c):
+                    path = c
+                    break
+            except Exception:
+                continue
+
+        if not path:
+            self._site_profiles_cache = ""
             return ""
 
         try:
             with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f) or {}
+                s = f.read()
+            self._site_profiles_cache = s
+            return s
         except Exception:
+            self._site_profiles_cache = ""
             return ""
 
-        site_overrides = data.get("siteOverrides") if isinstance(data, dict) else None
-        if not isinstance(site_overrides, dict):
-            return ""
-
-        payload = json.dumps(site_overrides, ensure_ascii=False)
-
-        # Avoid f-string `{}` escaping issues by using a template replacement.
-        template = r"""
-(function(){
-  try {
-    var overrides = __PAYLOAD__;
-    if (typeof window !== 'undefined') window.__siteOverrides = overrides;
-
-    if (typeof chrome === 'undefined') return;
-    chrome.storage = chrome.storage || {};
-    chrome.storage.sync = chrome.storage.sync || {};
-
-    // Make chrome.storage.sync.get({siteOverrides:{}} , cb) return our overrides
-    chrome.storage.sync.get = function(defaults, cb) {
-      try {
-        var out = (defaults && typeof defaults === 'object') ? Object.assign({}, defaults) : {};
-        out.siteOverrides = overrides;
-        if (typeof cb === 'function') cb(out);
-      } catch (e) {
-        try { if (typeof cb === 'function') cb(defaults || {}); } catch (_) {}
-      }
-    };
-  } catch (_) {}
-})();
-"""
-        return template.replace("__PAYLOAD__", payload)
-
-    async def _new_context(self, browser: Browser) -> BrowserContext:
+    async def _new_context(self, browser: Browser, base_url: str = "") -> BrowserContext:
         ctx = await browser.new_context(
             user_agent=self.user_agent,
             viewport={"width": 1365, "height": 900},
@@ -199,7 +192,7 @@ class PlaywrightExtractor:
                 "    if (typeof chrome !== 'undefined') return;\n"
                 "    var c = {};\n"
                 "    function mkArea(area){\n"
-                "      area.get = area.get || function(defaults,cb){ cb && cb(defaults || {}); };\n"
+                "      area.get = area.get || function(_,cb){ cb && cb({}); };\n"
                 "      area.set = area.set || function(_,cb){ cb && cb(); };\n"
                 "      area.remove = area.remove || function(_,cb){ cb && cb(); };\n"
                 "      return area;\n"
@@ -219,11 +212,48 @@ class PlaywrightExtractor:
             )
         )
 
-        # ✅ Inject site overrides FIRST (so content.js can use them in Playwright mode)
+        # Reduce third-party noise / throttling on some sites (maps, analytics, identity widgets).
+        try:
+            host = self._host_of(base_url or "")
+            if host.endswith("address.bg") or host.endswith("domaza.bg"):
+                async def _route(route, request):
+                    try:
+                        u = (request.url or "").lower()
+
+                        # Block very heavy / irrelevant third-party resources
+                        third_party_blocks = (
+                            "maps.googleapis.com/maps/api/js",
+                            "maps.googleapis.com/maps-api-v3",
+                            "static.hotjar.com/",
+                            "accounts.google.com/gsi/",
+                            "accounts.google.com/gsi/client",
+                            "challenges.cloudflare.com/",
+                        )
+                        if any(s in u for s in third_party_blocks):
+                            await route.abort()
+                            return
+
+                        # Address.bg map marker/icon requests are often rate-limited (429) and not needed for list scraping
+                        if host.endswith("address.bg") and "/images/map/" in u and u.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg")):
+                            await route.abort()
+                            return
+
+                        await route.continue_()
+                    except Exception:
+                        try:
+                            await route.continue_()
+                        except Exception:
+                            pass
+
+                await ctx.route("**/*", _route)
+        except Exception:
+            pass
+
+
+        # ✅ Option A: Inject built-in site profiles FIRST (so content.js can use them in Playwright mode)
         sp = self._load_site_profiles_script()
         if sp:
             await ctx.add_init_script(script=sp)
-
         # Inject extractor at document-start for every navigation
         await ctx.add_init_script(script=self._load_content_script())
         return ctx
@@ -252,7 +282,6 @@ class PlaywrightExtractor:
             await asyncio.sleep(0.1)
 
         raise RuntimeError("Extractor not initialized (timeout).")
-
     async def _extract(self, page: Page) -> Dict[str, Any]:
         await self._ensure_extractor(page)
         out = await page.evaluate("() => window.__imotiExtractor.run()")
@@ -289,6 +318,10 @@ class PlaywrightExtractor:
     def _is_imotiinfo(self, url: str) -> bool:
         h = self._host_of(url)
         return h.endswith("imoti.info") or h.endswith("www.imoti.info")
+
+    def _is_addressbg(self, url: str) -> bool:
+        h = self._host_of(url)
+        return h.endswith("address.bg") or h.endswith("www.address.bg")
 
     def _strip_choose_prefix(self, url: str) -> str:
         parts = urlsplit(url)
@@ -435,6 +468,18 @@ class PlaywrightExtractor:
             try:
                 msg = getattr(exc, "message", None) or str(exc)
                 stack = getattr(exc, "stack", None)
+                # Suppress noisy site JS errors that don't affect list scraping (maps/widgets/etc.)
+                try:
+                    noisy = (
+                        "OverlayView",
+                        "Cannot read properties of undefined (reading 'id')",
+                        "Cannot read properties of undefined (reading 'OverlayView')",
+                        "Permissions policy violation: Geolocation",
+                    )
+                    if any(s in (msg or "") for s in noisy) or any(s in (stack or "") for s in noisy):
+                        return
+                except Exception:
+                    pass
                 if stack:
                     print(f"[pageerror] {target_name}: {msg}\n{stack}")
                 else:
@@ -449,7 +494,39 @@ class PlaywrightExtractor:
                 if self.log_console_noise:
                     print(f"[console:{msg.type}] {target_name}: {msg.text}")
                 else:
-                    if msg.type in ("error", "warning"):
+                    if msg.type in ("error",):
+                        # Suppress known noisy console errors that don't affect list scraping
+                        try:
+                            t = (msg.text or "")
+                            loc0 = msg.location or {}
+                            lu = (loc0.get("url") or "") if isinstance(loc0, dict) else ""
+
+                            noise_substrings = (
+                                "Permissions policy violation: Geolocation",
+                                "Failed to load resource: the server responded with a status of 429",
+                                "Provider's accounts list is empty",
+                                "Not signed in with the identity provider",
+                                "FedCM get() rejects",
+                                "[GSI_LOGGER]",
+                                "GSI_LOGGER",
+                                "Hotjar not launching due to suspicious userAgent",
+                                "Failed to create WebGPU Context Provider",
+                                "Automatic fallback to software WebGL has been deprecated",
+                                "OverlayView",
+                                "Cannot read properties of undefined (reading 'id')",
+                                "Cannot read properties of undefined (reading 'OverlayView')",
+                            )
+                            noise_url_substrings = (
+                                "maps.googleapis.com/",
+                                "static.hotjar.com/",
+                                "accounts.google.com/gsi",
+                                "challenges.cloudflare.com/",
+                            )
+
+                            if any(s in t for s in noise_substrings) or any(s in lu for s in noise_url_substrings):
+                                return
+                        except Exception:
+                            pass
                         loc = msg.location or {}
                         url = loc.get("url") if isinstance(loc, dict) else None
                         line = loc.get("lineNumber") if isinstance(loc, dict) else None
@@ -506,7 +583,7 @@ class PlaywrightExtractor:
         posted_signatures = posted_signatures if posted_signatures is not None else set()
         seen_item_keys = seen_item_keys if seen_item_keys is not None else set()
 
-        ctx = await self._new_context(browser)
+        ctx = await self._new_context(browser, target.url)
         page = await ctx.new_page()
         self._attach_debug_listeners(page, target.name)
 
@@ -565,6 +642,8 @@ class PlaywrightExtractor:
             batch_every = max(0, min(5000, batch_every))
 
             seen_this_attempt: set = set()
+            repeat_sig_hits = 0  # address.bg sometimes repeats pages under throttling; allow a few repeats
+
 
             base_payload: Optional[Dict[str, Any]] = None
             batch_items: Dict[str, Dict[str, Any]] = {}
@@ -635,10 +714,17 @@ class PlaywrightExtractor:
                 sig = self._page_signature(payload)
 
                 if sig in seen_this_attempt:
-                    reason = "no_next(same_content)" if pages_visited > 1 else "loop_detected"
-                    print(f"[{target.name}] STOP {reason} page={pages_visited} url={page.url}")
-                    break
-                seen_this_attempt.add(sig)
+                    if self._is_addressbg(target.url) and repeat_sig_hits < 5:
+                        repeat_sig_hits += 1
+                        print(f"[{target.name}] WARN repeated_content allow_next hit={repeat_sig_hits} page={pages_visited} url={page.url}")
+                    else:
+                        reason = "no_next(same_content)" if pages_visited > 1 else "loop_detected"
+                        print(f"[{target.name}] STOP {reason} page={pages_visited} url={page.url}")
+                        break
+                else:
+                    seen_this_attempt.add(sig)
+                    repeat_sig_hits = 0
+
 
                 new_items_this_page = 0
 

@@ -15,13 +15,41 @@
       "updatedAt": "2026-01-23T01:02:40.653Z"
     },
     "www.holmes.bg": {
-      "selectorCards": [
-        "div.card-body"
-      ],
       "listingLinkPattern": "/obiava/",
-      "updatedAt": "2026-01-23T01:02:57.918Z"
+      "selectorCards": [
+        "div.card-row"
+      ],
+      "updatedAt": "2026-01-23T10:05:00.303Z"
+    },
+    "holmes.bg": {
+      "listingLinkPattern": "/obiava/",
+      "listingLinkIncludes": "/obiava",
+      "selectorCards": [
+        "a[href^='/obiava/']"
+      ]
+    },
+    "imoteka.bg": {
+      "listingLinkPattern": null,
+      "selectorCards": [
+        "div.offer-box-content"
+      ],
+      "updatedAt": "2026-01-23T10:55:08.782Z"
+    },
+    "www.domaza.bg": {
+      "listingLinkPattern": "/property/",
+      "selectorCards": [
+        "div.row.property_data"
+      ],
+      "updatedAt": "2026-01-23T12:53:20.674Z"
+    },
+    "address.bg": {
+      "listingLinkPattern": null,
+      "selectorCards": [
+        "div.content"
+      ],
+      "updatedAt": "2026-01-23T13:35:06.945Z"
     }
   },
-  "updatedAt": "2026-01-23T01:02:57.923921+00:00",
+  "updatedAt": "2026-01-23T13:35:06.950657+00:00",
   "source": "extension"
 }

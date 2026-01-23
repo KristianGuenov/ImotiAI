@@ -1,14 +1,58 @@
 
-- name: imoti_info_targovishte
-  url: "https://imoti.info/prodazhbi/grad-targovishte"
-  max_pages: 100
+- name: domaza_bg_sale
+  url: "https://www.domaza.bg/%D0%BD%D0%B5%D0%B4%D0%B2%D0%B8%D0%B6%D0%B8%D0%BC%D0%B8_%D0%B8%D0%BC%D0%BE%D1%82%D0%B8/_page/1/"
+  mode: pagination
+  max_pages: 40
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
   post_strategy: per_target
   post_batch_pages: 50
-  delay_ms: 1500
 
-- name: bazar_bg_sofia_sale
-  url: "https://bazar.bg/obiavi/prodazhba-imoti"
-  max_pages: 3000
+- name: arcoreal_bg_sale
+  url: "https://arcoreal.bg/%D0%BE%D1%84%D0%B5%D1%80%D1%82%D0%B8?t=2&ca=-1&pfr=&pto=&afr=&ato=&ffr=-100&fto=100&country-name=1&c=1&l%5B%5D=&page=1&limit=50"
+  mode: pagination
+  max_pages: 30
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: address_bg_sale
+  url: "https://address.bg/sale"
+  mode: pagination
+  max_pages: 1000
+  delay_ms: 8000
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imoteka_bg_sale
+  url: "https://imoteka.bg/sale"
+  mode: pagination
+  pagination_kind: click
+  next_click_selector: "div"
+  results_fingerprint_selector: "div.offer-box-footer"
+  wait_after_click_ms: 8000
+  timeout_ms: 15000
+  home_recover_url: https://imoteka.bg/sale
+
+- name: holmes_bg_sale
+  url: "https://www.holmes.bg/prodazhba"
+  mode: pagination
+  max_pages: 200
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imoti_info_targovishte
+  url: "https://imoti.info/prodazhbi/grad-targovishte"
+  mode: pagination
+  max_pages: 100
   post_strategy: per_target
   post_batch_pages: 50
   delay_ms: 1500
@@ -185,6 +229,13 @@
   url: "https://www.imoti.net/bg/obiavi/r/prodava/sofia/?sid=hSrJhL"
   mode: pagination
   max_pages: 500
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: bazar_bg_sofia_sale
+  url: "https://bazar.bg/obiavi/prodazhba-imoti"
+  max_pages: 3000
   post_strategy: per_target
   post_batch_pages: 50
   delay_ms: 1500

@@ -27,7 +27,19 @@
     "*://holmes.bg/*",
     "*://*.holmes.bg/*",
     "https://ues.bg/*",
-    "https://www.ues.bg/*"
+    "https://www.ues.bg/*",
+    "https://imoteka.bg/*",
+    "https://address.bg/*",
+    "https://www.luximmo.bg/*",
+    "https://www.bulgarianproperties.bg/*",
+    "https://www.mirela.bg/*",
+    "https://www.homes2u.bg/*",
+    "https://www.yavlena.com/*",
+    "https://buildingbox.bg/*",
+    "https://realistimo.com/*",
+    "https://arcoreal.bg/*",
+    "https://www.domaza.bg/*"
+
   ],
   "icons": {
     "16": "assets/icon-48.png",
