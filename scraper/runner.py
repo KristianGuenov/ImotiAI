@@ -3,10 +3,13 @@ import asyncio
 import json
 import os
 import random
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit, urlunsplit
+import time
 
 import httpx
 import yaml
@@ -14,16 +17,10 @@ from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 
 
 def utc_now_iso() -> str:
-    # UTC timestamp in ISO-8601 format
     return datetime.now(timezone.utc).isoformat()
 
 
-# -----------------------------
-# Data model
-# -----------------------------
-
-
-@dataclass(frozen=True)
+@dataclass
 class ScrapeTarget:
     """One target to scrape."""
 
@@ -32,7 +29,7 @@ class ScrapeTarget:
     mode: str = "extract_once"
 
     # pagination settings
-    max_pages: int = 25
+    max_pages: int = 4000
     delay_ms: int = 1500
 
     # load-more settings (passed directly to content.js LoadMore.run)
@@ -47,8 +44,7 @@ class ScrapeTarget:
     # - per_target: dedupe across pages and POST in batches (see post_batch_pages)
     post_strategy: str = "per_page"
 
-    # If post_strategy == per_target and mode == pagination:
-    # POST one batch per N pages (0 disables batching and posts once at end).
+    # If post_strategy == per_target, flush a batch every N pages (0 => one huge POST at end)
     post_batch_pages: int = 50
 
 
@@ -81,7 +77,7 @@ class TargetsLoader:
                     max_pages=int(item.get("max_pages") or 25),
                     delay_ms=int(item.get("delay_ms") or 1500),
                     load_more=dict(item.get("load_more") or {}),
-                    wait_until=str(item.get("wait_until") or "domcontentloaded"),
+                    wait_until=str(item.get("wait_until") or "domcontentloaded").strip(),
                     timeout_ms=int(item.get("timeout_ms") or 45_000),
                     post_strategy=str(item.get("post_strategy") or "per_page").strip(),
                     post_batch_pages=int(item.get("post_batch_pages") or 50),
@@ -91,76 +87,26 @@ class TargetsLoader:
         return targets
 
 
-# -----------------------------
-# API posting
-# -----------------------------
-
-
 class ApiClient:
-    def __init__(self, endpoint: str, api_key: str, timeout_s: float = 60.0):
+    def __init__(self, endpoint: str, api_key: str):
         self.endpoint = endpoint
         self.api_key = api_key
-        self.timeout_s = timeout_s
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client = httpx.AsyncClient(timeout=60.0)
 
-    async def __aenter__(self) -> "ApiClient":
-        self._client = httpx.AsyncClient(timeout=self.timeout_s)
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb) -> None:
-        # Best-effort close.
-        #
-        # When the process is interrupted (Ctrl+C / SIGTERM), asyncio may already be
-        # shutting down while httpx/anyio tries to close transports. In that case you can
-        # get noisy secondary exceptions like `anyio.NoEventLoopError`.
-        if self._client is not None:
-            try:
-                await self._client.aclose()
-            except Exception:
-                pass
-            self._client = None
+    async def close(self):
+        await self._client.aclose()
 
     async def post_extraction(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        if self._client is None:
-            raise RuntimeError("ApiClient not initialized")
-
-        headers = {
-            "content-type": "application/json",
-            "x-api-key": self.api_key or "",
-        }
+        headers = {"X-API-Key": self.api_key} if self.api_key else {}
         r = await self._client.post(self.endpoint, headers=headers, json=payload)
-        if r.status_code >= 400:
-            text = (r.text or "")[:800]
-            raise RuntimeError(f"API error {r.status_code}: {text}")
-        return r.json()
-
-
-# -----------------------------
-# Playwright scraping
-# -----------------------------
+        r.raise_for_status()
+        try:
+            return r.json()
+        except Exception:
+            return {"ok": True}
 
 
 class PlaywrightExtractor:
-    _BLOCKED_URL_PARTS = (
-        "doubleclick.net",
-        "googlesyndication.com",
-        "google-analytics.com",
-        "googletagmanager.com",
-        "googletagservices.com",
-        "securepubads.g.doubleclick.net",
-        "adservice.google.",
-        "/gpt/",
-        "prebid",
-        "adsystem",
-        "taboola",
-        "outbrain",
-        "criteo",
-        "scorecardresearch",
-        "quantserve",
-        "facebook.net/tr",
-        "tiktok.com/i18n/pixel",
-    )
-
     def __init__(
         self,
         content_script_path: str,
@@ -172,103 +118,114 @@ class PlaywrightExtractor:
         self.headless = headless
         self.user_agent = user_agent
         self.log_console_noise = log_console_noise
-        self._script_source: Optional[str] = None
+        self._content_script_cache: Optional[str] = None
 
     def _load_content_script(self) -> str:
-        if self._script_source is None:
-            with open(self.content_script_path, "r", encoding="utf-8") as f:
-                self._script_source = f.read()
-        return self._script_source
+        if self._content_script_cache is not None:
+            return self._content_script_cache
+
+        with open(self.content_script_path, "r", encoding="utf-8") as f:
+            script = f.read()
+
+        # Mark as injected for diagnostics
+        script = "try{window.__realEstateExtractorInjected=true;}catch(_e){}\n" + script
+        self._content_script_cache = script
+        return script
+
+    def _load_site_profiles_script(self) -> str:
+        """
+        Load /app/site_profiles.json (written by the profile-sink) and inject overrides so content.js can read them
+        via chrome.storage.sync.get({siteOverrides:{}} ...).
+
+        Returns a JS init-script string (or "" if no overrides are available).
+        """
+        path = os.getenv("SITE_PROFILES_PATH", "/app/site_profiles.json")
+        if not os.path.exists(path):
+            return ""
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f) or {}
+        except Exception:
+            return ""
+
+        site_overrides = data.get("siteOverrides") if isinstance(data, dict) else None
+        if not isinstance(site_overrides, dict):
+            return ""
+
+        payload = json.dumps(site_overrides, ensure_ascii=False)
+
+        # Avoid f-string `{}` escaping issues by using a template replacement.
+        template = r"""
+(function(){
+  try {
+    var overrides = __PAYLOAD__;
+    if (typeof window !== 'undefined') window.__siteOverrides = overrides;
+
+    if (typeof chrome === 'undefined') return;
+    chrome.storage = chrome.storage || {};
+    chrome.storage.sync = chrome.storage.sync || {};
+
+    // Make chrome.storage.sync.get({siteOverrides:{}} , cb) return our overrides
+    chrome.storage.sync.get = function(defaults, cb) {
+      try {
+        var out = (defaults && typeof defaults === 'object') ? Object.assign({}, defaults) : {};
+        out.siteOverrides = overrides;
+        if (typeof cb === 'function') cb(out);
+      } catch (e) {
+        try { if (typeof cb === 'function') cb(defaults || {}); } catch (_) {}
+      }
+    };
+  } catch (_) {}
+})();
+"""
+        return template.replace("__PAYLOAD__", payload)
 
     async def _new_context(self, browser: Browser) -> BrowserContext:
-        ua = self.user_agent or (
-            "Mozilla/5.0 (X11; Linux x86_64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        )
-
-        # Create a fresh context. We try to disable service workers because some sites
-        # register SW/worker scripts that reference `chrome.*` and crash in headless.
-        # (Blocking SWs also improves determinism and performance for scraping.)
-        ctx_kwargs = dict(
-            user_agent=ua,
+        ctx = await browser.new_context(
+            user_agent=self.user_agent,
             viewport={"width": 1365, "height": 900},
             java_script_enabled=True,
-            locale="bg-BG",
-            ignore_https_errors=True,
             bypass_csp=True,
+            ignore_https_errors=True,
         )
-        try:
-            ctx = await browser.new_context(**ctx_kwargs, service_workers="block")
-        except TypeError:
-            # Older Playwright
-            ctx = await browser.new_context(**ctx_kwargs)
 
-        # Some sites (and some extension-originated scripts) reference `chrome.*` directly.
-        # In Playwright there is NO extension API, so `chrome` is often undefined which can crash page JS
-        # and prevent our extractor from booting.
-        #
-        # We install a minimal, harmless stub that:
-        #   - defines the global identifier `chrome`
-        #   - defines window.chrome
-        #   - provides no-op runtime/onMessage + storage.sync.get/set
-        #
-        # This is ONLY for scraping; in a real extension context Chrome provides the real API.
-        # Robust `chrome` stub.
-        # NOTE: we also use an *indirect eval* to create a true global `var chrome` binding
-        # in case site scripts reference the identifier `chrome` very early.
+        # Some portals run scripts that reference extension APIs (chrome.*). Provide a minimal stub.
         await ctx.add_init_script(
             script=(
-                "(() => {\n"
+                "(function(){\n"
                 "  try {\n"
-                "    const g = globalThis;\n"
-                "    g.chrome = g.chrome || {};\n"
-                "    try { (0, eval)(\"if (typeof chrome === 'undefined') { var chrome = globalThis.chrome; }\"); } catch(e) {}\n"
-                "    if (typeof window !== 'undefined') window.chrome = g.chrome;\n"
-                "    const c = g.chrome;\n"
-                "    c.runtime = c.runtime || {};\n"
-                "    c.runtime.id = c.runtime.id || '';\n"
-                "    c.runtime.lastError = c.runtime.lastError || null;\n"
-                "    c.runtime.getURL = c.runtime.getURL || (p => String(p || ''));\n"
-                "    c.runtime.onMessage = c.runtime.onMessage || { addListener: function(){} };\n"
-                "    c.runtime.sendMessage = c.runtime.sendMessage || function(){ };\n"
-                "    c.storage = c.storage || {};\n"
-                "    const mkArea = (area) => {\n"
-                "      area.get = area.get || function(keys, cb){\n"
-                "        try {\n"
-                "          if (typeof cb === 'function') {\n"
-                "            if (keys && typeof keys === 'object' && !Array.isArray(keys)) cb(keys); else cb({});\n"
-                "          }\n"
-                "        } catch(e) {}\n"
-                "      };\n"
-                "      area.set = area.set || function(_obj, cb){ try { if (typeof cb === 'function') cb(); } catch(e) {} };\n"
-                "      area.remove = area.remove || function(_keys, cb){ try { if (typeof cb === 'function') cb(); } catch(e) {} };\n"
-                "      area.clear = area.clear || function(cb){ try { if (typeof cb === 'function') cb(); } catch(e) {} };\n"
+                "    if (typeof window === 'undefined') return;\n"
+                "    if (typeof chrome !== 'undefined') return;\n"
+                "    var c = {};\n"
+                "    function mkArea(area){\n"
+                "      area.get = area.get || function(defaults,cb){ cb && cb(defaults || {}); };\n"
+                "      area.set = area.set || function(_,cb){ cb && cb(); };\n"
+                "      area.remove = area.remove || function(_,cb){ cb && cb(); };\n"
                 "      return area;\n"
-                "    };\n"
+                "    }\n"
+                "    c.runtime = c.runtime || {};\n"
+                "    c.runtime.getURL = c.runtime.getURL || function(p){ return p; };\n"
+                "    c.storage = c.storage || {};\n"
                 "    c.storage.sync = mkArea(c.storage.sync || {});\n"
                 "    c.storage.local = mkArea(c.storage.local || {});\n"
                 "    c.i18n = c.i18n || {};\n"
                 "    c.i18n.getMessage = c.i18n.getMessage || function(){ return ''; };\n"
                 "    c.app = c.app || { isInstalled: false };\n"
+                "    window.chrome = c;\n"
+                "    window.__chromeStubbed = true;\n"
                 "  } catch (_) {}\n"
                 "})();\n"
             )
         )
 
+        # ✅ Inject site overrides FIRST (so content.js can use them in Playwright mode)
+        sp = self._load_site_profiles_script()
+        if sp:
+            await ctx.add_init_script(script=sp)
+
         # Inject extractor at document-start for every navigation
-        script = self._load_content_script()
-        await ctx.add_init_script(script=script)
-
-        # Block noisy/slow ad & tracking requests
-        async def _route_handler(route, request):
-            url = (request.url or "").lower()
-            if any(part in url for part in self._BLOCKED_URL_PARTS):
-                await route.abort()
-                return
-            await route.continue_()
-
-        await ctx.route("**/*", _route_handler)
+        await ctx.add_init_script(script=self._load_content_script())
         return ctx
 
     async def _ensure_extractor(self, page: Page) -> None:
@@ -281,46 +238,20 @@ class PlaywrightExtractor:
         if await _has():
             return
 
-        # Fallback injection (in case init_script didn't run).
-        # We try multiple strategies because some pages have CSP oddities.
-        script = self._load_content_script()
-        injected = False
+        # Fallback: try injecting again (rare; e.g. if page replaced context by cross-origin nav)
         try:
-            await page.add_script_tag(content=script)
-            injected = True
+            await page.add_init_script(self._load_site_profiles_script() or "")
         except Exception:
-            injected = False
+            pass
+        await page.add_init_script(self._load_content_script())
 
-        if not injected:
-            # As a last resort, run via indirect eval in the page global scope.
-            try:
-                await page.evaluate(
-                    "(code) => { try { (0, eval)(code); return true; } catch(e) { return String(e); } }", script
-                )
-            except Exception:
-                pass
+        t0 = time.time()
+        while time.time() - t0 < 12.0:
+            if await _has():
+                return
+            await asyncio.sleep(0.1)
 
-        try:
-            await page.wait_for_function(
-                "() => !!(window.__imotiExtractor && window.__imotiExtractor.run)",
-                timeout=30_000,
-            )
-        except PlaywrightTimeoutError:
-            # Capture a small diagnostic snapshot to make failures actionable.
-            try:
-                diag = await page.evaluate(
-                    """() => ({
-                      url: location.href,
-                      readyState: document.readyState,
-                      hasExtractor: !!(window.__imotiExtractor && window.__imotiExtractor.run),
-                      injectedFlag: !!window.__realEstateExtractorInjected,
-                      chromeType: (typeof chrome),
-                      hasWindowChrome: (typeof window !== 'undefined' && !!window.chrome)
-                    })"""
-                )
-            except Exception:
-                diag = {"url": getattr(page, "url", None), "note": "failed to eval diag"}
-            raise RuntimeError(f"Extractor not initialized (timeout). Diagnostic: {diag}")
+        raise RuntimeError("Extractor not initialized (timeout).")
 
     async def _extract(self, page: Page) -> Dict[str, Any]:
         await self._ensure_extractor(page)
@@ -345,8 +276,161 @@ class PlaywrightExtractor:
         await self._ensure_extractor(page)
         await page.evaluate("(opts) => window.__imotiExtractor.loadMore(opts || {})", options or {})
 
+    def _host_of(self, url: str) -> str:
+        try:
+            return (urlsplit(url).hostname or "").lower()
+        except Exception:
+            return ""
+
+    def _is_imotbg(self, url: str) -> bool:
+        h = self._host_of(url)
+        return h.endswith("imot.bg") or h.endswith("www.imot.bg")
+
+    def _is_imotiinfo(self, url: str) -> bool:
+        h = self._host_of(url)
+        return h.endswith("imoti.info") or h.endswith("www.imoti.info")
+
+    def _strip_choose_prefix(self, url: str) -> str:
+        parts = urlsplit(url)
+        path = parts.path or ""
+        if path.startswith("/choose/"):
+            path = path[len("/choose"):]  # keep leading slash
+        return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
+
+    def _manual_page_url(self, base_url: str, page_num: int) -> Optional[str]:
+        """Build deterministic page URLs for known sites to avoid unstable Next links."""
+        if self._is_imotbg(base_url):
+            return self._imotbg_page_url(base_url, page_num)
+        if self._is_imotiinfo(base_url):
+            return self._imotiinfo_page_url(base_url, page_num)
+        return None
+
+    def _imotbg_page_url(self, base_url: str, page_num: int) -> str:
+        """imot.bg list paging uses /p-{n}/ as a PATH segment."""
+        parts = urlsplit(base_url)
+        path = (parts.path or "").rstrip("/")
+
+        # remove trailing /p-<n> or /p-<n>/ if present
+        path = re.sub(r"/p-\d+/?$", "", path).rstrip("/")
+
+        if page_num <= 1:
+            new_path = path
+        else:
+            # keep trailing slash to avoid weird canonicalizations
+            new_path = f"{path}/p-{page_num}/"
+
+        return urlunsplit((parts.scheme, parts.netloc, new_path, parts.query, parts.fragment))
+
+    def _imotiinfo_page_url(self, base_url: str, page_num: int) -> str:
+        """imoti.info commonly uses /page-N at the end of the path (avoid /choose/)."""
+        base_url = self._strip_choose_prefix(base_url)
+        parts = urlsplit(base_url)
+        path = (parts.path or "").rstrip("/")
+
+        # remove existing /page-N tail
+        path = re.sub(r"/page-\d+/?$", "", path).rstrip("/")
+
+        if page_num <= 1:
+            new_path = path or "/"
+        else:
+            new_path = f"{path}/page-{page_num}"
+
+        return urlunsplit((parts.scheme, parts.netloc, new_path, parts.query, parts.fragment))
+
+    async def _has_next_control_imotbg(self, page: Page) -> bool:
+        """Best-effort check: if there is clearly no 'next' control, don't attempt p-2."""
+        try:
+            return bool(
+                await page.evaluate(
+                    """() => {
+                      const sels = [
+                        "a[rel='next']",
+                        "link[rel='next']",
+                        ".pagination a.next",
+                        ".pagination a[rel='next']",
+                        "a.next",
+                        "a[aria-label*='Следва']",
+                        "a[title*='Следва']",
+                        "a[title*='Next']",
+                        "a[aria-label*='Next']"
+                      ];
+                      return sels.some(s => document.querySelector(s));
+                    }"""
+                )
+            )
+        except Exception:
+            return True  # if we can't evaluate, don't block pagination
+
+    async def _ensure_imotiinfo_not_choose(self, page: Page, wait_timeout_ms: int) -> bool:
+        """If we land on /choose/, try to get to the real listings page."""
+        if not self._is_imotiinfo(page.url or ""):
+            return True
+
+        if "/choose/" not in (page.url or ""):
+            return True
+
+        # 1) Try direct navigation to stripped URL.
+        try:
+            fixed = self._strip_choose_prefix(page.url)
+            if fixed != page.url:
+                await page.goto(fixed, wait_until="domcontentloaded", timeout=wait_timeout_ms)
+        except Exception:
+            pass
+
+        if "/choose/" not in (page.url or ""):
+            return True
+
+        # 2) Try clicking a "continue/show" control on the choose page to set cookie/state.
+        try:
+            clicked = await page.evaluate(
+                """() => {
+                  const norm = (s) => (s || "").replace(/\\s+/g, " ").trim().toLowerCase();
+
+                  // Prefer links that lead to non-/choose/ list pages
+                  const links = Array.from(document.querySelectorAll("a[href]"));
+                  const preferred = links.find(a => {
+                    const h = a.getAttribute("href") || "";
+                    return (h.includes("/prodazhbi/") || h.includes("/naemi/")) && !h.includes("/choose/");
+                  });
+                  if (preferred) { preferred.click(); return true; }
+
+                  // Buttons or inputs with text like "покажи", "продължи", "виж", "търси"
+                  const texts = ["покажи", "продължи", "виж", "търси", "готово", "приложи"];
+                  const buttons = Array.from(document.querySelectorAll("button, a.btn, input[type='submit'], input[type='button']"));
+                  const btn = buttons.find(el => {
+                    const t = el.tagName === "INPUT" ? (el.value || "") : (el.textContent || "");
+                    const nt = norm(t);
+                    return texts.some(k => nt.includes(k));
+                  });
+                  if (btn) { btn.click(); return true; }
+
+                  return false;
+                }"""
+            )
+            if clicked:
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=wait_timeout_ms)
+                except Exception:
+                    pass
+                if "/choose/" in (page.url or ""):
+                    fixed = self._strip_choose_prefix(page.url)
+                    if fixed != page.url:
+                        await page.goto(fixed, wait_until="domcontentloaded", timeout=wait_timeout_ms)
+        except Exception:
+            pass
+
+        if "/choose/" in (page.url or ""):
+            return False
+
+        # 3) Best-effort validation
+        try:
+            await page.wait_for_selector("a[href*='/obiava']", timeout=min(15000, wait_timeout_ms))
+        except Exception:
+            pass
+
+        return True
+
     def _attach_debug_listeners(self, page: Page, target_name: str) -> None:
-        # Page-level JS exceptions. Print message + stack when available.
         def _on_pageerror(exc):
             try:
                 msg = getattr(exc, "message", None) or str(exc)
@@ -361,44 +445,28 @@ class PlaywrightExtractor:
         page.on("pageerror", _on_pageerror)
 
         def _console_handler(msg):
-            if self.log_console_noise and msg.type in ("error", "warning"):
-                # Include location when available to pinpoint failing scripts.
-                try:
-                    loc = msg.location
-                    if loc and loc.get("url"):
-                        print(
-                            f"[console:{msg.type}] {target_name}: {msg.text} "
-                            f"({loc.get('url')}:{loc.get('lineNumber')}:{loc.get('columnNumber')})"
-                        )
-                    else:
-                        print(f"[console:{msg.type}] {target_name}: {msg.text}")
-                except Exception:
-                    print(f"[console:{msg.type}] {target_name}: {msg.text}")
-
-        page.on("console", _console_handler)
-
-        # Best-effort: stub `chrome` in web workers too (context init scripts do NOT run there).
-        # This won't save a worker that throws *before* we attach, but it reduces noise on sites
-        # where workers reference chrome after startup.
-        def _on_worker(worker):
-            async def _init_worker():
-                try:
-                    await worker.evaluate("(() => { try { globalThis.chrome = globalThis.chrome || {}; } catch(e) {} })();")
-                except Exception:
-                    pass
-
             try:
-                asyncio.create_task(_init_worker())
+                if self.log_console_noise:
+                    print(f"[console:{msg.type}] {target_name}: {msg.text}")
+                else:
+                    if msg.type in ("error", "warning"):
+                        loc = msg.location or {}
+                        url = loc.get("url") if isinstance(loc, dict) else None
+                        line = loc.get("lineNumber") if isinstance(loc, dict) else None
+                        col = loc.get("columnNumber") if isinstance(loc, dict) else None
+                        where = f" {url}:{line}:{col}" if url else ""
+                        print(f"[console:{msg.type}] {target_name}:{where} {msg.text}")
             except Exception:
                 pass
 
-        try:
-            page.on("worker", _on_worker)
-        except Exception:
-            # Some Playwright versions might not support this event.
-            pass
+        page.on("console", _console_handler)
 
-    def _page_signature(self, extracted_payload: Dict[str, Any], max_urls: int = 15) -> str:
+    def _page_signature(self, extracted_payload: Dict[str, Any], max_urls: int = 200) -> str:
+        """Signature for loop detection.
+
+        Uses a *sorted* set of many item URLs (not just the first few) to avoid false loop detection
+        when a site pins/promotes the same top listings on every page.
+        """
         items = extracted_payload.get("items") if isinstance(extracted_payload, dict) else None
         if not isinstance(items, list) or not items:
             return "no-items"
@@ -413,7 +481,11 @@ class PlaywrightExtractor:
             if len(urls) >= max_urls:
                 break
 
-        return "|".join(urls) if urls else "no-urls"
+        if not urls:
+            return "no-urls"
+
+        urls = sorted(set(urls))
+        return "|".join(urls)
 
     def _item_key(self, item: Dict[str, Any]) -> str:
         u = item.get("url")
@@ -447,7 +519,13 @@ class PlaywrightExtractor:
             await page.wait_for_timeout(700)
             await self._ensure_extractor(page)
 
-            # Single page modes
+            # imoti.info gating: ensure we are not stuck on /choose/ before extracting anything
+            if self._is_imotiinfo(page.url or "") and "/choose/" in (page.url or ""):
+                ok = await self._ensure_imotiinfo_not_choose(page, target.timeout_ms)
+                if not ok:
+                    print(f"[{target.name}] STOP imotiinfo_choose_gate url={page.url}")
+                    return 1, 0, None
+
             if target.mode == "extract_once":
                 payload = await self._extract(page)
                 sig = self._page_signature(payload)
@@ -461,8 +539,7 @@ class PlaywrightExtractor:
                 return pages_visited, posts_done, last_id
 
             if target.mode == "load_more_then_extract":
-                await self._load_more(page, target.load_more)
-                await page.wait_for_timeout(int(max(300, min(5000, target.delay_ms))))
+                await self._load_more(page, target.load_more or {})
                 payload = await self._extract(page)
                 sig = self._page_signature(payload)
                 if sig not in posted_signatures:
@@ -474,7 +551,6 @@ class PlaywrightExtractor:
                 print(f"[{target.name}] page=1(load_more) items={len(payload.get('items') or [])} posted={posts_done}")
                 return pages_visited, posts_done, last_id
 
-            # Pagination mode
             if target.mode != "pagination":
                 raise ValueError(f"Unknown mode '{target.mode}' for target '{target.name}'")
 
@@ -488,10 +564,8 @@ class PlaywrightExtractor:
             batch_every = int(target.post_batch_pages or 50)
             batch_every = max(0, min(5000, batch_every))
 
-            # Loop detection in THIS attempt
             seen_this_attempt: set = set()
 
-            # Batch buffers (per_target)
             base_payload: Optional[Dict[str, Any]] = None
             batch_items: Dict[str, Dict[str, Any]] = {}
             batch_page_urls: List[str] = []
@@ -504,17 +578,10 @@ class PlaywrightExtractor:
                 if post_strategy != "per_target":
                     return
 
-                # If batching disabled, we'll post once at the end.
-                if batch_every <= 0:
-                    return
-
                 if not batch_items:
                     batch_page_urls = []
                     batch_pages = 0
                     return
-
-                if base_payload is None:
-                    base_payload = {"sourceUrl": target.url, "extractedAt": utc_now_iso(), "items": [], "meta": {}}
 
                 payload_to_post = json.loads(json.dumps(base_payload, ensure_ascii=False))
                 payload_to_post["sourceUrl"] = target.url
@@ -530,7 +597,8 @@ class PlaywrightExtractor:
                         "batchPages": batch_pages,
                         "batchPageUrls": list(batch_page_urls),
                         "pagesVisitedSoFar": pages_visited,
-                        "uniqueItemsTotalSoFar": len(seen_item_keys),
+                        "uniqueItemsTotal": len(seen_item_keys),
+                        "uniqueItemsInBatch": len(batch_items),
                         "flushReason": reason,
                     }
                 )
@@ -551,6 +619,13 @@ class PlaywrightExtractor:
                 batch_pages = 0
 
             for _ in range(max_pages):
+                # avoid extracting on imoti.info /choose/ pages
+                if self._is_imotiinfo(page.url or "") and "/choose/" in (page.url or ""):
+                    ok = await self._ensure_imotiinfo_not_choose(page, target.timeout_ms)
+                    if not ok:
+                        print(f"[{target.name}] STOP imotiinfo_choose_gate page={pages_visited+1} url={page.url}")
+                        break
+
                 payload = await self._extract(page)
                 pages_visited += 1
 
@@ -560,7 +635,8 @@ class PlaywrightExtractor:
                 sig = self._page_signature(payload)
 
                 if sig in seen_this_attempt:
-                    print(f"[{target.name}] STOP loop_detected page={pages_visited} url={page.url}")
+                    reason = "no_next(same_content)" if pages_visited > 1 else "loop_detected"
+                    print(f"[{target.name}] STOP {reason} page={pages_visited} url={page.url}")
                     break
                 seen_this_attempt.add(sig)
 
@@ -571,8 +647,7 @@ class PlaywrightExtractor:
                         resp = await api.post_extraction(payload)
                         last_id = resp.get("id") if isinstance(resp, dict) else last_id
                         posts_done += 1
-
-                    else:  # per_target
+                    else:
                         if base_payload is None:
                             base_payload = payload
 
@@ -585,22 +660,12 @@ class PlaywrightExtractor:
                                     continue
                                 seen_item_keys.add(k)
                                 new_items_this_page += 1
-
-                                if batch_every > 0:
-                                    batch_items[k] = it
-                                else:
-                                    # no batching: store everything in memory and post once at end
-                                    batch_items[k] = it
+                                batch_items[k] = it
 
                         batch_page_urls.append(page.url)
                         batch_pages += 1
 
                     posted_signatures.add(sig)
-                else:
-                    print(
-                        f"[{target.name}] SKIP already_processed page={pages_visited}/{max_pages} "
-                        f"items={item_count} url={page.url}"
-                    )
 
                 if post_strategy == "per_target":
                     print(
@@ -617,10 +682,35 @@ class PlaywrightExtractor:
                 if post_strategy == "per_target" and batch_every > 0 and batch_pages >= batch_every:
                     await flush_batch(reason=f"reached_{batch_every}_pages")
 
-                did_nav = await self._navigate_next(page)
-                if not did_nav:
-                    print(f"[{target.name}] STOP no_next page={pages_visited} url={page.url}")
+                if pages_visited >= max_pages:
                     break
+
+                next_page_num = pages_visited + 1
+                manual_next = self._manual_page_url(target.url, next_page_num)
+
+                if manual_next:
+                    if self._is_imotbg(target.url) and pages_visited == 1:
+                        has_next = await self._has_next_control_imotbg(page)
+                        if not has_next:
+                            print(f"[{target.name}] STOP no_next(no_control) page={pages_visited} url={page.url}")
+                            break
+
+                    try:
+                        await page.goto(manual_next, wait_until=target.wait_until, timeout=target.timeout_ms)
+                    except Exception as e:
+                        print(f"[{target.name}] STOP nav_failed page={pages_visited} next={manual_next} err={e}")
+                        break
+
+                    if self._is_imotiinfo(page.url or "") and "/choose/" in (page.url or ""):
+                        ok = await self._ensure_imotiinfo_not_choose(page, target.timeout_ms)
+                        if not ok:
+                            print(f"[{target.name}] STOP imotiinfo_choose_gate page={pages_visited} url={page.url}")
+                            break
+                else:
+                    did_nav = await self._navigate_next(page)
+                    if not did_nav:
+                        print(f"[{target.name}] STOP no_next page={pages_visited} url={page.url}")
+                        break
 
                 try:
                     await page.wait_for_load_state("domcontentloaded", timeout=target.timeout_ms)
@@ -634,12 +724,10 @@ class PlaywrightExtractor:
                     jitter = random.randint(0, min(600, delay_ms))
                     await page.wait_for_timeout(delay_ms + jitter)
 
-            # Final post for per_target
             if post_strategy == "per_target":
                 if batch_every > 0:
                     await flush_batch(reason="final")
                 else:
-                    # One huge POST at end (not recommended for 900 pages, but supported)
                     if base_payload is not None:
                         merged = json.loads(json.dumps(base_payload, ensure_ascii=False))
                         merged["sourceUrl"] = target.url
@@ -682,51 +770,47 @@ class ScrapeRunner:
 
         self.loader = TargetsLoader(targets_file)
         self.extractor = PlaywrightExtractor(content_script_path=content_script_path, headless=headless)
-
-        # Keep state per target across a retry in the same run
         self._posted_sigs_by_target: Dict[str, set] = {}
         self._seen_item_keys_by_target: Dict[str, set] = {}
 
     async def _launch_browser(self, p) -> Browser:
-        args = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
-        return await p.chromium.launch(headless=self.headless, args=args)
+        return await p.chromium.launch(
+            headless=self.headless,
+            args=[
+                "--disable-dev-shm-usage",
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-features=IsolateOrigins,site-per-process",
+            ],
+        )
 
-    async def run_once(self) -> int:
+    async def run(self, only: Optional[str] = None) -> None:
         targets = self.loader.load()
-        if not targets:
-            print("No targets found. (targets.yml is empty)")
-            return 0
+        if only:
+            targets = [t for t in targets if t.name == only]
+            if not targets:
+                raise ValueError(f"No target named '{only}' in {self.targets_file}")
 
-        async with ApiClient(self.api_endpoint, self.api_key) as api:
-            async with async_playwright() as p:
-                browser: Optional[Browser] = None
-                try:
-                    browser = await self._launch_browser(p)
-                except Exception as e:
-                    print(f"Failed to launch browser: {e}")
-                    return 0
+        api = ApiClient(self.api_endpoint, self.api_key)
 
+        async with async_playwright() as p:
+            browser = await self._launch_browser(p)
+            try:
                 ok = 0
-                try:
-                    for t in targets:
-                        print(f"\n=== {t.name} ===")
-                        print(f"URL: {t.url}")
-                        print(
-                            f"Mode: {t.mode} | post_strategy: {t.post_strategy} | "
-                            f"post_batch_pages: {t.post_batch_pages}"
-                        )
+                fail = 0
 
-                        if browser is None or not browser.is_connected():
-                            try:
-                                browser = await self._launch_browser(p)
-                            except Exception as e:
-                                print(f"Browser relaunch failed: {e}")
-                                continue
+                for t in targets:
+                    print(f"=== {t.name} ===")
+                    print(f"URL: {t.url}")
+                    print(f"Mode: {t.mode} | post_strategy: {t.post_strategy} | post_batch_pages: {t.post_batch_pages}")
 
-                        posted = self._posted_sigs_by_target.setdefault(t.name, set())
-                        seen_keys = self._seen_item_keys_by_target.setdefault(t.name, set())
-
+                    attempts = 0
+                    while attempts < 2:
+                        attempts += 1
                         try:
+                            posted = self._posted_sigs_by_target.setdefault(t.name, set())
+                            seen_keys = self._seen_item_keys_by_target.setdefault(t.name, set())
+
                             pages_visited, posts_done, last_id = await self.extractor.scrape_target(
                                 api,
                                 t,
@@ -739,6 +823,8 @@ class ScrapeRunner:
                                 f"DONE target={t.name} pages_visited={pages_visited} posts_done={posts_done} "
                                 f"last_extraction_id={last_id}"
                             )
+                            break
+
                         except Exception as e:
                             msg = str(e)
                             if "Target page, context or browser has been closed" in msg:
@@ -749,60 +835,46 @@ class ScrapeRunner:
                                     except Exception:
                                         pass
                                     browser = await self._launch_browser(p)
-
-                                    pages_visited, posts_done, last_id = await self.extractor.scrape_target(
-                                        api,
-                                        t,
-                                        browser,
-                                        posted_signatures=posted,
-                                        seen_item_keys=seen_keys,
-                                    )
-                                    ok += 1
-                                    print(
-                                        f"DONE(retry) target={t.name} pages_visited={pages_visited} posts_done={posts_done} "
-                                        f"last_extraction_id={last_id}"
-                                    )
                                 except Exception as e2:
-                                    print(f"FAILED target '{t.name}' after retry: {e2}")
-                            else:
-                                print(f"FAILED target '{t.name}': {e}")
+                                    print(f"Browser relaunch failed: {e2}")
+                                    fail += 1
+                                    break
+                                continue
 
-                    return ok
-                finally:
-                    if browser is not None:
-                        try:
-                            await browser.close()
-                        except Exception:
-                            pass
+                            print(f"FAILED target={t.name} err={e}")
+                            fail += 1
+                            break
+
+                print(f"SUMMARY ok={ok} fail={fail}")
+
+            finally:
+                await api.close()
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
 
 
-async def _amain(argv: List[str]) -> int:
-    parser = argparse.ArgumentParser(description="Playwright scraper worker (posts to FastAPI /extractions).")
-    parser.add_argument("--targets", default=os.getenv("TARGETS_FILE", "./targets.yml"))
-    parser.add_argument("--content-script", default=os.getenv("CONTENT_SCRIPT_PATH", "./content.js"))
-    parser.add_argument("--endpoint", default=os.getenv("API_ENDPOINT", "http://localhost:8787/api/v1/extractions"))
-    parser.add_argument("--api-key", default=os.getenv("API_KEY", "dev-key-change-me"))
-    parser.add_argument("--headful", action="store_true", help="Run with visible browser (debug)")
-    args = parser.parse_args(argv)
+def main():
+    targets_file = os.getenv("TARGETS_FILE", "targets.yml")
+    content_script_path = os.getenv("CONTENT_SCRIPT_PATH", "content.js")
+    api_endpoint = os.getenv("API_ENDPOINT", "http://localhost:8787/api/v1/extractions")
+    api_key = os.getenv("API_KEY", "")
+
+    parser = argparse.ArgumentParser(description="Run index/list extraction targets.")
+    parser.add_argument("--only", help="Run only a single target name", default=None)
+    parser.add_argument("--headful", action="store_true", help="Run with a visible browser (headless=false)")
+    args = parser.parse_args()
 
     runner = ScrapeRunner(
-        targets_file=args.targets,
-        content_script_path=args.content_script,
-        api_endpoint=args.endpoint,
-        api_key=args.api_key,
+        targets_file=targets_file,
+        content_script_path=content_script_path,
+        api_endpoint=api_endpoint,
+        api_key=api_key,
         headless=not args.headful,
     )
 
-    ok = await runner.run_once()
-    return 0 if ok > 0 else 2
-
-
-def main() -> None:
-    try:
-        code = asyncio.run(_amain(sys.argv[1:]))
-    except KeyboardInterrupt:
-        code = 130
-    raise SystemExit(code)
+    asyncio.run(runner.run(only=args.only))
 
 
 if __name__ == "__main__":

@@ -1,236 +1,403 @@
-- name: "imotbg-sofia-banishora-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/banishora/ednostaen?type_home=2~3~4~5~6~"  
-  mode: "pagination"
-  max_pages: 25
-  delay_ms: 1800
-  post_strategy: per_target
 
-
-- name: imot_info_big
-  url: "https://imoti.info/prodazhbi?bounds=W3sibGF0Ijo0Mi4zMTI0NDMzMDc2Njk0MSwibG5nIjoyNC4zOTE1MzAxNTEzNjcyMDN9LHsibGF0Ijo0My4wNDUzOTUxOTg2OTQ0MiwibG5nIjoyNi4zNDg0Njk4NDg2MzI4Mjh9XQ%3D%3D&details=1"
-  mode: pagination
-  max_pages: 900
+- name: imoti_info_targovishte
+  url: "https://imoti.info/prodazhbi/grad-targovishte"
+  max_pages: 100
   post_strategy: per_target
   post_batch_pages: 50
   delay_ms: 1500
 
+- name: bazar_bg_sofia_sale
+  url: "https://bazar.bg/obiavi/prodazhba-imoti"
+  max_pages: 3000
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: imot_info_big1
+  url: "https://imoti.info/prodazhbi/grad-sofiya?craion=108&craion=107&craion=106&craion=20&craion=6195&craion=19&craion=18&craion=17&craion=6101&craion=105&craion=15&craion=144&craion=14"
+  mode: pagination
+  max_pages: 100
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: imot_info_big2
+  url: "https://imoti.info/prodazhbi/grad-sofiya?craion=16&craion=13&craion=104&craion=11&craion=10&craion=103&craion=102&craion=9"
+  mode: pagination
+  max_pages: 100
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: imot_info_big3
+  url: "https://imoti.info/prodazhbi/grad-sofiya?craion=101&craion=8&craion=7&craion=6192&craion=5&craion=4&craion=3&craion=86&craion=1"
+  mode: pagination
+  max_pages: 100
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: imot_info_big4
+  url: "https://imoti.info/prodazhbi/grad-sofiya?craion=2&craion=6"
+  mode: pagination
+  max_pages: 100
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: imot_info_big5
+  url: "https://imoti.info/prodazhbi/grad-sofiya/malinova-dolina"
+  mode: pagination
+  max_pages: 100
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: imot_info_big6
+  url: "https://imoti.info/prodazhbi/grad-sofiya/tsentar/apartamenti"
+  mode: pagination
+  max_pages: 100
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: imot_info_big7
+  url: "https://imoti.info/prodazhbi/grad-sofiya/tsentar/biznes-pomeshtenya"
+  mode: pagination
+  max_pages: 100
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: imot_info_big8
+  url: "https://imoti.info/prodazhbi/zemi?area=&price=&price1=50000"
+  mode: pagination
+  max_pages: 100
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: imot_info_big9
+  url: "https://imoti.info/prodazhbi/zemi?area=&price=50000"
+  mode: pagination
+  max_pages: 100
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: imot_info_big10
+  url: "https://imoti.info/prodazhbi/grad-sofiya/tsentar/partseli"
+  mode: pagination
+  max_pages: 100
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: imot_info_big11
+  url: "https://imoti.info/prodazhbi/grad-sofiya?craion=113&craion=112&craion=111&craion=26&craion=110&craion=32&craion=109&craion=148&craion=21&craion=22&craion=25&craion=24&craion=23"
+  mode: pagination
+  max_pages: 100
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: imot_info_big12
+  url: "https://imoti.info/prodazhbi/grad-sofiya?craion=29&craion=28&craion=115&craion=114&craion=27"
+  mode: pagination
+  max_pages: 100
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: imot_info_big13
+  url: "https://imoti.info/prodazhbi/grad-sofiya?craion=41&craion=39&craion=38&craion=37&craion=36&craion=35&craion=34&craion=33&craion=117&craion=116&craion=31&craion=30"
+  mode: pagination
+  max_pages: 100
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: imot_info_big14
+  url: "https://imoti.info/prodazhbi/grad-sofiya?craion=119&craion=43&craion=42&craion=40"
+  mode: pagination
+  max_pages: 100
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: imot_info_big15
+  url: "https://imoti.info/prodazhbi/grad-sofiya?craion=51&craion=50&craion=121&craion=48&craion=47&craion=46&craion=45&craion=44&craion=120"
+  mode: pagination
+  max_pages: 100
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: imot_info_big16
+  url: "https://imoti.info/prodazhbi/grad-sofiya?craion=6136&craion=57&craion=56&craion=55&craion=54&craion=128&craion=156&craion=127&craion=155&craion=53&craion=52&craion=49"
+  mode: pagination
+  max_pages: 100
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: imot_info_big17
+  url: "https://imoti.info/prodazhbi/grad-sofiya?craion=68&craion=67&craion=66&craion=65&craion=157&craion=64&craion=63&craion=62&craion=61&craion=60&craion=132&craion=131&craion=59&craion=58&craion=130&craion=129"
+  mode: pagination
+  max_pages: 100
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: imot_info_big18
+  url: "https://imoti.info/prodazhbi/grad-sofiya?craion=4136&craion=133&craion=4097&craion=4065&craion=4062&craion=4056&craion=4036&craion=4034&craion=4030&craion=4029&craion=4020&craion=4009&craion=5457&craion=3999&craion=3998&craion=3995&craion=3990&craion=3988&craion=3980&craion=3970&craion=3968&craion=3966&craion=3977"
+  mode: pagination
+  max_pages: 100
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: imot_info_big19
+  url: "https://imoti.info/prodazhbi/grad-sofiya?craion=3846&craion=98&craion=3832&craion=6193&craion=97&craion=96&craion=95&craion=93&craion=139&craion=91&craion=90&craion=89&craion=88&craion=87&craion=138&craion=85&craion=84&craion=82&craion=79&craion=137&craion=80&craion=81&craion=77&craion=76"
+  mode: pagination
+  max_pages: 100
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: imot_info_big20
+  url: "https://imoti.info/prodazhbi/grad-sofiya?craion=78&craion=75&craion=74&craion=73&craion=136&craion=135&craion=72&craion=134&craion=160&craion=71&craion=70&craion=69"
+  mode: pagination
+  max_pages: 100
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
+
+- name: imot_info_big21
+  url: "https://imoti.info/prodazhbi/grad-sofiya?craion=3951&craion=3948&craion=3942&craion=3922&craion=3913&craion=3905&craion=3904&craion=3901&craion=3890&craion=3872&craion=3858&craion=154&craion=5136&craion=6198&craion=5133&craion=126&craion=124&craion=123&craion=6197&craion=122&craion=153&craion=152&craion=6196&craion=147&craion=146&craion=3835&craion=6194&craion=100&craion=140&craion=6193&craion=97&craion=96"
+  mode: pagination
+  max_pages: 100
+  post_strategy: per_target
+  post_batch_pages: 50
+  delay_ms: 1500
 
 - name: imot_net_big
-  url: "https://www.imoti.net/bg/obiavi/r/prodava/sofia/?sid=hSrJhL" 
+  url: "https://www.imoti.net/bg/obiavi/r/prodava/sofia/?sid=hSrJhL"
   mode: pagination
-  max_pages: 900
+  max_pages: 500
   post_strategy: per_target
   post_batch_pages: 50
   delay_ms: 1500
-   
+
 # Example for sites that need infinite scroll / load more
-- name: "UniqueEstates"
+- name: UniqueEstates
   url: "https://ues.bg/bg/bgr/imoti/prodajbi/sofia/all?_=1768823898263&"
-  mode: "load_more_then_extract"
+  mode: load_more_then_extract
   load_more:
     scrollSteps: 100
     idleCycles: 3
     stepDelayMs: 900
 
+- name: imotbg-sofia-banishora-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/banishora/ednostaen?type_home=2~3~4~5~6~"
+  mode: pagination
+  max_pages: 25
+  delay_ms: 1800
+  post_strategy: per_target
+
 # imot.bg — split by neighborhoods because of the 25 page cap
-
-- name: "imotbg-sofia-benkovski-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/benkovski/ednostaen?type_home=2~3~4~5~6~&raioni=4~5~86~6192~"  
-  mode: "pagination"
+- name: imotbg-sofia-benkovski-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/benkovski/ednostaen?type_home=2~3~4~5~6~&raioni=4~5~86~6192~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-boyana-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/boyana/ednostaen?type_home=2~3~4~5~6~"  
-  mode: "pagination"
+- name: imotbg-sofia-boyana-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/boyana/ednostaen?type_home=2~3~4~5~6~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-bakston-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/bakston/ednostaen?type_home=2~3~4~5~6~&raioni=9~10~11~13~14~101~102~103~104~"  
-  mode: "pagination"
+- name: imotbg-sofia-bakston-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/bakston/ednostaen?type_home=2~3~4~5~6~&raioni=9~10~11~13~14~101~102~103~104~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-vitosha-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/vitosha/ednostaen?type_home=2~3~4~5~6~"  
-  mode: "pagination"
+- name: imotbg-sofia-vitosha-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/vitosha/ednostaen?type_home=2~3~4~5~6~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-dianabad-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/dianabad/ednostaen?type_home=2~3~4~5~6~&raioni=16~19~105~144~6101~6195~"  
-  mode: "pagination"
+- name: imotbg-sofia-dianabad-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/dianabad/ednostaen?type_home=2~3~4~5~6~&raioni=16~19~105~144~6101~6195~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-druzhba-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/druzhba-1/ednostaen?type_home=2~3~4~5~6~&raioni=18~"  
-  mode: "pagination"
+- name: imotbg-sofia-druzhba-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/druzhba-1/ednostaen?type_home=2~3~4~5~6~&raioni=18~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-zapaden-park-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/zapaden-park/ednostaen?type_home=2~3~4~5~6~&raioni=21~22~24~25~26~106~107~108~109~110~148~"  
-  mode: "pagination"
+- name: imotbg-sofia-zapaden-park-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/zapaden-park/ednostaen?type_home=2~3~4~5~6~&raioni=21~22~24~25~26~106~107~108~109~110~148~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-iztok-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/iztok/ednostaen?type_home=2~3~4~5~6~&raioni=27~28~29~30~31~111~112~113~114~"  
-  mode: "pagination"
+- name: imotbg-sofia-iztok-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/iztok/ednostaen?type_home=2~3~4~5~6~&raioni=27~28~29~30~31~111~112~113~114~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-krastova-vada-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/krastova-vada/dvustaen?type_home=3~"  
-  mode: "pagination"
+- name: imotbg-sofia-krastova-vada-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/krastova-vada/dvustaen?type_home=3~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-krastova-vada-1-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/krastova-vada/ednostaen?type_home=4~5~6~"  
-  mode: "pagination"
+- name: imotbg-sofia-krastova-vada-1-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/krastova-vada/ednostaen?type_home=4~5~6~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-lozenets-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/lozenets/ednostaen?type_home=2~3~4~5~6~&raioni=33~34~116~117~"  
-  mode: "pagination"
+- name: imotbg-sofia-lozenets-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/lozenets/ednostaen?type_home=2~3~4~5~6~&raioni=33~34~116~117~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-lyulin-2-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/lyulin-2/ednostaen?type_home=2~3~4~5~6~&raioni=36~37~38~39~40~"  
-  mode: "pagination"
+- name: imotbg-sofia-lyulin-2-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/lyulin-2/ednostaen?type_home=2~3~4~5~6~&raioni=36~37~38~39~40~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-lyulin-8-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/lyulin-8/ednostaen?type_home=2~3~4~5~6~&raioni=42~43~44~45~46~120~"  
-  mode: "pagination"
+- name: imotbg-sofia-lyulin-8-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/lyulin-8/ednostaen?type_home=2~3~4~5~6~&raioni=42~43~44~45~46~120~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-mladost-3-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/mladost-3/ednostaen?type_home=2~3~4~5~6~&raioni=48~49~121~"  
-  mode: "pagination"
+- name: imotbg-sofia-mladost-3-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/mladost-3/ednostaen?type_home=2~3~4~5~6~&raioni=48~49~121~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-malinova-dolina1-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/malinova-dolina/ednostaen?type_home=4~5~6~"  
-  mode: "pagination"
+- name: imotbg-sofia-malinova-dolina1-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/malinova-dolina/ednostaen?type_home=4~5~6~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-malinova-dolina3-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/malinova-dolina/tristaen"  
-  mode: "pagination"
+- name: imotbg-sofia-malinova-dolina3-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/malinova-dolina/tristaen"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-malinova-dolina2-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/malinova-dolina/dvustaen"  
-  mode: "pagination"
+- name: imotbg-sofia-malinova-dolina2-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/malinova-dolina/dvustaen"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-manastirski-livadi-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/manastirski-livadi/ednostaen?type_home=2~4~5~6~"  
-  mode: "pagination"
+- name: imotbg-sofia-manastirski-livadi-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/manastirski-livadi/ednostaen?type_home=2~4~5~6~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-
-- name: "imotbg-sofia-manastirski-livadi2-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/manastirski-livadi/tristaen"  
-  mode: "pagination"
+- name: imotbg-sofia-manastirski-livadi2-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/manastirski-livadi/tristaen"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-nadezhda-1-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/nadezhda-1/ednostaen?type_home=2~3~4~5~6~&raioni=51~52~53~54~55~56~57~127~128~155~156~"  
-  mode: "pagination"
+- name: imotbg-sofia-nadezhda-1-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/nadezhda-1/ednostaen?type_home=2~3~4~5~6~&raioni=51~52~53~54~55~56~57~127~128~155~156~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-ovcha-kupel-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/ovcha-kupel/ednostaen?type_home=2~3~4~5~6~"  
-  mode: "pagination"
+- name: imotbg-sofia-ovcha-kupel-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/ovcha-kupel/ednostaen?type_home=2~3~4~5~6~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-orlandovtsi-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/orlandovtsi/ednostaen?type_home=2~3~4~5~6~&raioni=59~60~129~130~"  
-  mode: "pagination"
+- name: imotbg-sofia-orlandovtsi-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/orlandovtsi/ednostaen?type_home=2~3~4~5~6~&raioni=59~60~129~130~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-poligona-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/poligona/ednostaen?type_home=2~3~4~5~6~&raioni=62~63~64~74~75~76~77~78~79~80~81~82~84~85~131~132~137~157~"  
-  mode: "pagination"
+- name: imotbg-sofia-poligona-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/poligona/ednostaen?type_home=2~3~4~5~6~&raioni=62~63~64~74~75~76~77~78~79~80~81~82~84~85~131~132~137~157~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-tsentar-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/tsentar/tristaen"  
-  mode: "pagination"
+- name: imotbg-sofia-tsentar-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/tsentar/tristaen"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-tsentar2-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/tsentar/ednostaen?type_home=2~4~5~6~"  
-  mode: "pagination"
+- name: imotbg-sofia-tsentar2-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/tsentar/ednostaen?type_home=2~4~5~6~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-sela-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/v-z-amerikanski-kolezh/ednostaen?type_home=2~3~4~5~6~&raioni=88~89~90~91~93~95~96~97~98~100~122~123~124~126~133~139~140~146~147~152~153~154~3832~3835~3846~3858~3872~3890~3901~3904~3905~3913~3922~3942~3948~3951~3966~3968~3970~3977~3980~3988~3990~3995~3998~3999~4009~4020~4029~4030~4034~4036~4056~4062~4065~4097~4136~5133~5136~5457~6193~6194~6196~6197~6198~"  
-  mode: "pagination"
+- name: imotbg-sofia-sela-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/v-z-amerikanski-kolezh/ednostaen?type_home=2~3~4~5~6~&raioni=88~89~90~91~93~95~96~97~98~100~122~123~124~126~133~139~140~146~147~152~153~154~3832~3835~3846~3858~3872~3890~3901~3904~3905~3913~3922~3942~3948~3951~3966~3968~3970~3977~3980~3988~3990~3995~3998~3999~4009~4020~4029~4030~4034~4036~4056~4062~4065~4097~4136~5133~5136~5457~6193~6194~6196~6197~6198~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-sveta-troitsa-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/sveta-troitsa/ednostaen?type_home=2~3~4~5~6~&raioni=66~67~68~70~71~73~134~136~160~"  
-  mode: "pagination"
+- name: imotbg-sofia-sveta-troitsa-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/sveta-troitsa/ednostaen?type_home=2~3~4~5~6~&raioni=66~67~68~70~71~73~134~136~160~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
 
-- name: "imotbg-sofia-strelbishte-sale"
-  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/strelbishte/ednostaen?type_home=2~3~4~5~6~&raioni=135~"  
-  mode: "pagination"
+- name: imotbg-sofia-strelbishte-sale
+  url: "https://www.imot.bg/obiavi/prodazhbi/grad-sofiya/strelbishte/ednostaen?type_home=2~3~4~5~6~&raioni=135~"
+  mode: pagination
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
-
-
-
-

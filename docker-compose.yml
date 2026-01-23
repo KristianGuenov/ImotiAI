@@ -1,4 +1,4 @@
-version: "3.9"
+
 
 services:
   db:
@@ -22,6 +22,18 @@ services:
     depends_on:
       - db
 
+  # Bridge: Extension -> POST http://127.0.0.1:8788/profile -> writes repo-root site_profiles.json
+  profile-sink:
+    image: python:3.11-slim
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+    ports:
+      - "8788:8788"
+    command: ["python", "/workspace/scraper/profile_sink.py", "--host", "0.0.0.0", "--port", "8788", "--out", "/workspace/site_profiles.json"]
+    restart: unless-stopped
+
+
   # Regular/index scraper (list pages -> item URLs, image URLs, short text, etc.)
   scraper:
     profiles: ["scrape"]
@@ -36,6 +48,9 @@ services:
       CONTENT_SCRIPT_PATH: /app/content.js
       TZ: Europe/Sofia
 
+      # Make runner look here (matches your default anyway)
+      SITE_PROFILES_PATH: /app/site_profiles.json
+
       # Detail runner defaults (can be overridden on CLI)
       API_BASE: http://api:8787
       DETAIL_RULES_FILE: /app/scraper/detail_rules.yml
@@ -43,14 +58,20 @@ services:
       DETAIL_MAX_URLS: 200
       DETAIL_GLOBAL_CONCURRENCY: 6
       DETAIL_POST_BATCH_SIZE: 25
+
     shm_size: "1gb"
     volumes:
       - ./scraper/targets.yml:/app/targets.yml:ro
       - ./extension/content.js:/app/content.js:ro
       - ./scraper/detail_rules.yml:/app/scraper/detail_rules.yml:ro
       - ./scraper/detail_extractor.js:/app/scraper/detail_extractor.js:ro
+
+      # ✅ this is the important mount: repo-root file -> what runner reads
+      - ./site_profiles.json:/app/site_profiles.json:ro
+
     depends_on:
       - api
+      - profile-sink
 
   # Optional: runs the detail runner once per day and drains the whole queue (multi-domain).
   # Enable with: docker compose --profile schedule up -d detail_scheduler

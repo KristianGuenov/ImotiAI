@@ -15,7 +15,20 @@
   },
   "options_page": "options.html",
   "permissions": ["activeTab", "scripting", "storage", "tabs", "sidePanel"],
-  "host_permissions": ["<all_urls>"],
+  "host_permissions": [
+    "http://127.0.0.1:8787/*",
+    "http://localhost:8787/*",
+    "http://127.0.0.1:8788/*",
+    "http://localhost:8788/*",
+    "https://imoti.info/*",
+    "https://bazar.bg/*",
+    "https://imoti.net/*",
+    "https://www.imot.bg/*",
+    "*://holmes.bg/*",
+    "*://*.holmes.bg/*",
+    "https://ues.bg/*",
+    "https://www.ues.bg/*"
+  ],
   "icons": {
     "16": "assets/icon-48.png",
     "32": "assets/icon-48.png",

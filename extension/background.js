@@ -5,6 +5,9 @@ const DEFAULTS = {
   apiKey: "dev-key-change-me",
 };
 
+// ✅ Add sink defaults (can be overridden by storage later if you want)
+const PROFILE_SINK_DEFAULT = "http://127.0.0.1:8788/profile";
+
 let stopRequested = false;
 
 function hostFromUrl(url) {
@@ -48,6 +51,45 @@ function getSettings() {
   return new Promise((resolve) => {
     chrome.storage.sync.get(DEFAULTS, (items) => resolve(items));
   });
+}
+
+// ✅ Read sink url if present, else default
+function getSinkUrl() {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get({ profileSinkUrl: PROFILE_SINK_DEFAULT }, (items) => {
+      resolve(items.profileSinkUrl || PROFILE_SINK_DEFAULT);
+    });
+  });
+}
+
+// ✅ Post overrides to sink (this is what updates repo-root site_profiles.json)
+async function pushSiteOverridesToSink(siteOverrides) {
+  if (!siteOverrides || typeof siteOverrides !== "object") return { ok: false, error: "siteOverrides_invalid" };
+
+  let url = PROFILE_SINK_DEFAULT;
+  try {
+    url = await getSinkUrl();
+  } catch (_) {}
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        siteOverrides,
+        source: "extension",
+        ts: Date.now(),
+      }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { ok: false, error: `sink_http_${res.status}: ${text || res.statusText}` };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  }
 }
 
 async function postExtraction(payload) {
@@ -259,8 +301,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       const all = await getSiteOverrides();
       all[hostname] = { ...(all[hostname] || {}), ...override, updatedAt: new Date().toISOString() };
+
+      // ✅ 1) persist in chrome storage
       await setSiteOverrides(all);
-      sendResponse({ ok: true, hostname, override: all[hostname] });
+
+      // ✅ 2) immediately push to sink so repo-root site_profiles.json updates
+      const pushed = await pushSiteOverridesToSink(all);
+
+      sendResponse({
+        ok: true,
+        hostname,
+        override: all[hostname],
+        pushedToSink: pushed.ok,
+        sinkError: pushed.ok ? null : pushed.error,
+      });
       return;
     }
 

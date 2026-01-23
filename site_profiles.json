@@ -1,0 +1,27 @@
+{
+  "siteOverrides": {
+    "imoti.info": {
+      "listingLinkPattern": "/obiava/",
+      "selectorCards": [
+        "div.info"
+      ],
+      "updatedAt": "2026-01-23T00:02:13.444Z"
+    },
+    "bazar.bg": {
+      "listingLinkPattern": "/obiava/",
+      "selectorCards": [
+        "div.card-body"
+      ],
+      "updatedAt": "2026-01-23T01:02:40.653Z"
+    },
+    "www.holmes.bg": {
+      "selectorCards": [
+        "div.card-body"
+      ],
+      "listingLinkPattern": "/obiava/",
+      "updatedAt": "2026-01-23T01:02:57.918Z"
+    }
+  },
+  "updatedAt": "2026-01-23T01:02:57.923921+00:00",
+  "source": "extension"
+}
