@@ -564,6 +564,49 @@ class PlaywrightExtractor:
         urls = sorted(set(urls))
         return "|".join(urls)
 
+    def _is_holmesbg(self, url: str) -> bool:
+        try:
+            return "holmes.bg" in (url or "")
+        except Exception:
+            return False
+
+    async def _wait_holmes_results_ready(self, page: Page, timeout_ms: int) -> None:
+        """Holmes often hydrates listings after initial DOM load.
+
+        Without a short readiness gate, extraction can capture only the first row of cards.
+        This waits until the listing link count stabilizes or reaches a typical page size.
+        """
+        selector = "a[href^='/obiava/']"
+
+        # Cap the gate time so it never blocks the whole run.
+        deadline = time.monotonic() + (min(int(timeout_ms or 0), 15_000) / 1000.0)
+        last_count = -1
+        stable_since: Optional[float] = None
+
+        while True:
+            try:
+                count = await page.locator(selector).count()
+            except Exception:
+                count = 0
+
+            # Typical Holmes pages show up to 20 results ("1-20").
+            if count >= 20:
+                return
+
+            if count > 0 and count == last_count:
+                if stable_since is None:
+                    stable_since = time.monotonic()
+                elif (time.monotonic() - stable_since) >= 1.0:
+                    return
+            else:
+                stable_since = None
+                last_count = count
+
+            if time.monotonic() >= deadline:
+                return
+
+            await page.wait_for_timeout(250)
+
     def _item_key(self, item: Dict[str, Any]) -> str:
         u = item.get("url")
         if isinstance(u, str) and u:
@@ -595,6 +638,10 @@ class PlaywrightExtractor:
             await page.goto(target.url, wait_until=target.wait_until, timeout=target.timeout_ms)
             await page.wait_for_timeout(700)
             await self._ensure_extractor(page)
+
+            # holmes.bg often hydrates listings after initial DOM load; wait until results are ready
+            if self._is_holmesbg(target.url):
+                await self._wait_holmes_results_ready(page, target.timeout_ms)
 
             # imoti.info gating: ensure we are not stuck on /choose/ before extracting anything
             if self._is_imotiinfo(page.url or "") and "/choose/" in (page.url or ""):
@@ -805,6 +852,10 @@ class PlaywrightExtractor:
 
                 await page.wait_for_timeout(500)
                 await self._ensure_extractor(page)
+
+                # holmes.bg: wait for hydrated results after navigation
+                if self._is_holmesbg(target.url):
+                    await self._wait_holmes_results_ready(page, target.timeout_ms)
 
                 if delay_ms:
                     jitter = random.randint(0, min(600, delay_ms))

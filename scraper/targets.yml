@@ -1,4 +1,376 @@
 
+
+
+- name: holmes_bg_sale
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/abdovitsa?raioni=138~1~2~86~3~4"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+
+- name: holmes_bg_sale1
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/botunets?raioni=5~6192~7~101~9~102~103~10~11"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+
+- name: holmes_bg_sale3
+  url: "https://www.holmes.bg/prodazhba/1-staen/grad-sofiya/boyana?type_home=2~3~4~1~5~6~8"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+
+- name: holmes_bg_sale2
+  url: "https://www.holmes.bg/prodazhba/partsel/grad-sofiya/boyana"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+
+- name: holmes_bg_sale4
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/vitosha"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+
+- name: holmes_bg_sale5
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/gorublyane?raioni=104~13~14~144~105~6101"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+
+- name: holmes_bg_sale6
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/dianabad?raioni=15~16"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+
+- name: holmes_bg_sale7
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/druzhba-1?raioni=17~18~19"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+
+- name: holmes_bg_sale8
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/zapaden-park?raioni=6195~20~106~107~108~109~148~21~25~24"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+
+- name: holmes_bg_sale9
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/izgrev?raioni=23~22~110~26~111~112~27~113"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+
+- name: holmes_bg_sale10
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/lagera?raioni=114~28~29~30~31~116"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: holmes_bg_sale11
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/lozenets?raioni=32~117~33"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: holmes_bg_sale12
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/lyulin-10?raioni=34~35~36~37~38"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: holmes_bg_sale13
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/lyulin-6?raioni=39~40~41~42~43~120~121~49"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: holmes_bg_sale14
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/mladost-1?raioni=44~45~46~47"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+- name: holmes_bg_sale15
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/mladost-4?raioni=48~119"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+- name: holmes_bg_sale16
+  url: "https://www.holmes.bg/prodazhba/2-staen/grad-sofiya/malinova-dolina"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: holmes_bg_sale17
+  url: "https://www.holmes.bg/prodazhba/1-staen/grad-sofiya/malinova-dolina?type_home=1~3~4~5~6~8"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: holmes_bg_sale18
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/nadezhda-1?raioni=50~51~52~53~155~127~156~128~54~55~56~57~58"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: holmes_bg_sale19
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/ovcha-kupel"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: holmes_bg_sale20
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/ovcha-kupel-1?raioni=129~130"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: holmes_bg_sale21
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/pavlovo?raioni=59~131~132~60~61~62~63~64~157~65~66"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: holmes_bg_sale22
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/serdika?raioni=67~68~69~70~71~160~134~136"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: holmes_bg_sale23
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/strelbishte?raioni=73~72~74~75~76~77~78~137~79~80~81~82"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: holmes_bg_sale24
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/chelopechene?raioni=6196~152~122~153~6197~123~124~126~5133~6198~5136~154~146~147~85~84"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: holmes_bg_sale25
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/v-z-amerikanski-kolezh?raioni=87~88~89~90~91~139~93~95~96~97~6193~6194~100~140~98~3846~3835~146~147"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: holmes_bg_sale26
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/grad-bankya"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: holmes_bg_sale27
+  url: "https://www.holmes.bg/prodazhba/partsel/grad-sofiya"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+
+- name: holmes_bg_sale28
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/selo-balsha?raioni=3858~3872~3890~3901~3904~3905"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+
+- name: holmes_bg_sale29
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/selo-german?raioni=3913~3922~3942~3948~3951~3966~3968~3970~3977~3980~3988~3990"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+  
+- name: holmes_bg_sale30
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/selo-krivina?raioni=3995~3998~3999~5457~4009~4020~4029~4030~4034~4036"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: holmes_bg_sale31
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/selo-chepintsi?raioni=4056~4062~4065~4097~133~4136"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: holmes_bg_sale32
+  url: "https://www.holmes.bg/prodazhba/grad-sofiya/krastova-vada"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: holmes_bg_sale33
+  url: "https://www.holmes.bg/prodazhba/1-staen/grad-sofiya/tsentar?type_home=2~1~4"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: holmes_bg_sale34
+  url: "https://www.holmes.bg/prodazhba/3-staen/grad-sofiya/tsentar?type_home=3~5~6~8"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: holmes_bg_sale35
+  url: "https://www.holmes.bg/prodazhba/ofis/grad-sofiya/tsentar?type_home=17~16~14~13~7~12"
+  mode: pagination
+  max_pages: 50
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+  
 - name: domaza_bg_sale
   url: "https://www.domaza.bg/%D0%BD%D0%B5%D0%B4%D0%B2%D0%B8%D0%B6%D0%B8%D0%BC%D0%B8_%D0%B8%D0%BC%D0%BE%D1%82%D0%B8/_page/1/"
   mode: pagination
@@ -32,22 +404,15 @@
 - name: imoteka_bg_sale
   url: "https://imoteka.bg/sale"
   mode: pagination
-  pagination_kind: click
-  next_click_selector: "div"
-  results_fingerprint_selector: "div.offer-box-footer"
+  pagination_kind: numbers
+  results_fingerprint_selector: "a[href*='-offer']"
+  # optional but recommended if there are multiple "2/3/4" on the page:
+  page_number_container_selector: "ul.pagination"
+  page_number_item_selector: "a.page-link"
   wait_after_click_ms: 8000
   timeout_ms: 15000
-  home_recover_url: https://imoteka.bg/sale
-
-- name: holmes_bg_sale
-  url: "https://www.holmes.bg/prodazhba"
-  mode: pagination
-  max_pages: 200
-  delay_ms: 1500
-  wait_until: domcontentloaded
-  timeout_ms: 45000
-  post_strategy: per_target
   post_batch_pages: 50
+  max_pages: 1000
 
 - name: imoti_info_targovishte
   url: "https://imoti.info/prodazhbi/grad-targovishte"

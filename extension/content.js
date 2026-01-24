@@ -98,6 +98,122 @@
     return false;
   }
 
+  // ---------------------------------------------------------------------------
+  // Holmes.bg special-case helpers
+  // ---------------------------------------------------------------------------
+
+  function isHolmesHost(hostname) {
+    const h = String(hostname || "").toLowerCase();
+    return h === "holmes.bg" || h === "www.holmes.bg";
+  }
+
+  function absUrl(href) {
+    if (!href) return "";
+    try { return new URL(href, location.href).toString(); } catch (_) { return String(href); }
+  }
+
+  function isUsefulImageSrc(src) {
+    if (!src) return false;
+    const s = String(src).toLowerCase();
+    if (s.endsWith(".svg")) return false;
+    // UI icons frequently present on holmes list pages
+    if (s.includes("assets/images/")) return false;
+    if (s.includes("filter.svg") || s.includes("sort.svg") || s.includes("map.svg")) return false;
+    if (s.includes("favourite.svg") || s.includes("chevron")) return false;
+    if (s.includes("top.svg")) return false;
+    return true;
+  }
+
+  // Pick a "card root" around a listing anchor by walking upwards until the parent
+  // contains exactly ONE listing link. This scopes text/images to one listing block
+  // and avoids pulling page-title and UI toolbar icons.
+  function closestHolmesCardRoot(a, maxDepth = 8) {
+    let el = a;
+    for (let i = 0; i < maxDepth && el; i++) {
+      const p = el.parentElement;
+      if (!p) break;
+      let n = 999;
+      try { n = p.querySelectorAll("a[href^='/obiava/']").length; } catch (_) { n = 999; }
+      if (n === 1) return p;
+      el = p;
+    }
+    return a.parentElement || a;
+  }
+
+  function extractHolmesItemFromAnchor(a) {
+    const root = closestHolmesCardRoot(a, 8);
+
+    const url = absUrl(a.getAttribute("href") || a.href || "");
+
+    // Prefer heading-like text within the root; fallback to anchor text.
+    let title = null;
+    try {
+      const h = root.querySelector("h1,h2,h3,h4,.offer-title,.title");
+      const ht = DomText.normalize(h ? h.textContent : "");
+      if (ht) title = DomText.safeTruncate(ht, 160);
+    } catch (_) {}
+
+    if (!title) {
+      const at = DomText.normalize(a.textContent);
+      if (at) title = DomText.safeTruncate(at, 160);
+    }
+
+    const images = [];
+    try {
+      const imgs = Array.from(root.querySelectorAll("img"));
+      for (const img of imgs) {
+        const src = img.currentSrc || img.getAttribute("src") || img.getAttribute("data-src") || "";
+        const u = absUrl(src);
+        if (isUsefulImageSrc(u)) images.push(u);
+        if (images.length >= 8) break;
+      }
+    } catch (_) {}
+
+    const texts = [];
+    // Keep texts compatible with existing schema: short lines inside the root
+    try {
+      const nodes = Array.from(root.querySelectorAll("span,div,p,li,strong,em,small")).slice(0, 120);
+      for (const n of nodes) {
+        const t = DomText.normalize(n.textContent);
+        if (!t) continue;
+        if (t.length < 3 || t.length > 160) continue;
+        texts.push(t);
+        if (texts.length >= 10) break;
+      }
+    } catch (_) {}
+
+    return {
+      title: title,
+      url: url || null,
+      image: images[0] || null,
+      images: Array.from(new Set(images)).slice(0, 8),
+      texts: Array.from(new Set(texts)).slice(0, 10),
+      rawText: DomText.visibleText(root, 600),
+    };
+  }
+
+  function extractHolmesItemsFromPage() {
+    // Use the listing anchor pattern as the primary unit.
+    const anchors = Array.from(document.querySelectorAll("a[href^='/obiava/']"))
+      .filter((a) => a && a.getAttribute && (a.getAttribute("href") || "").startsWith("/obiava/"))
+      .filter((a) => !isProbablyFooterOrNav(a));
+
+    if (!anchors.length) return [];
+
+    const seen = new Set();
+    const out = [];
+
+    for (const a of anchors) {
+      const href = a.getAttribute("href") || "";
+      if (!href || seen.has(href)) continue;
+      seen.add(href);
+      out.push(extractHolmesItemFromAnchor(a));
+      if (out.length >= 250) break;
+    }
+    return out;
+  }
+
+
   function chooseListingLinkPatternFromPage() {
     const patterns = [
       "/obiava/",
@@ -555,6 +671,18 @@
       if (!next) return false;
 
       if (next.type === "href" && next.href) {
+        // Holmes pagination links often drop the current query string (filters like ?raioni=...).
+        // Preserve location.search when the next href has no query of its own.
+        if (/(^|\.)holmes\.bg$/i.test(location.hostname) && location.search) {
+          try {
+            const u = new URL(next.href, location.href);
+            if (!u.search) u.search = location.search;
+            location.href = u.toString();
+            return true;
+          } catch (e) {
+            // fall through to default behavior
+          }
+        }
         location.href = next.href;
         return true;
       }
@@ -789,6 +917,32 @@
           extracted.meta.itemCount = extracted.items.length;
           extracted.meta.sampleLinks = extracted.items.map((it) => it.url).filter(Boolean).slice(0, 5);
           return { ok: true, result: extracted };
+        }
+      }
+
+
+      // Holmes.bg list pages: anchor-based extraction avoids page-level fallbacks (page title / toolbar icons)
+      if (isHolmesHost(hostname)) {
+        const items = extractHolmesItemsFromPage();
+        if (items && items.length >= 3) {
+          const timingMs = Math.round(nowMs() - t0);
+          return {
+            ok: true,
+            result: {
+              dataVersion: 1,
+              sourceUrl: location.href,
+              pageTitle: document.title || null,
+              extractedAt: new Date().toISOString(),
+              meta: {
+                siteProfileUsed: hostname,
+                strategyUsed: "holmes(anchor-root)",
+                timingMs,
+                itemCount: items.length,
+                sampleLinks: items.map((it) => it.url).filter(Boolean).slice(0, 5),
+              },
+              items,
+            },
+          };
         }
       }
 

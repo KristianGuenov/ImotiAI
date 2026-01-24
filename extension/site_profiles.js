@@ -107,6 +107,32 @@
         enabled: true,
       },
     },
+    {
+      id: "holmes.bg",
+      matchHosts: ["holmes.bg", "www.holmes.bg"],
+      discovery: {
+        anchorHrefIncludes: "/obiava/",
+        cardRootClosestSelectors: ["article", "li", "div", "section"],
+      },
+      timing: {
+        waitForSelector: "a[href^='/obiava/']",
+        waitTimeoutMs: 20000,
+      },
+      pagination: {
+        nextSelectors: [
+          "link[rel='next']",
+          "a[rel='next']",
+          ".pagination a.next",
+          ".pagination a[rel='next']",
+          "a[title*='Следваща']",
+          "a[aria-label*='Next']",
+        ],
+      },
+      nested: {
+        enabled: true,
+      },
+    },
+
   ];
 
   window.__imotiBuiltInProfiles = profiles;

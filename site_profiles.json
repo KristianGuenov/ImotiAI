@@ -13,20 +13,7 @@
         "div.card-body"
       ],
       "updatedAt": "2026-01-23T01:02:40.653Z"
-    },
-    "www.holmes.bg": {
-      "listingLinkPattern": "/obiava/",
-      "selectorCards": [
-        "div.card-row"
-      ],
-      "updatedAt": "2026-01-23T10:05:00.303Z"
-    },
-    "holmes.bg": {
-      "listingLinkPattern": "/obiava/",
-      "listingLinkIncludes": "/obiava",
-      "selectorCards": [
-        "a[href^='/obiava/']"
-      ]
+    
     },
     "imoteka.bg": {
       "listingLinkPattern": null,
@@ -48,8 +35,25 @@
         "div.content"
       ],
       "updatedAt": "2026-01-23T13:35:06.945Z"
-    }
+    },
+"holmes.bg": {
+      "listingLinkPattern": "/obiava/",
+      "listingLinkIncludes": "/obiava",
+      "selectorTitle": "h3, h2, .offer-title, .title",
+      "selectorImages": "img",
+      "ignoreImagePatterns": [
+        ".svg",
+        "filter.svg",
+        "sort.svg",
+        "map.svg"
+      ],
+      "selectorCards": [
+        "div.card-row",
+        "div.card-body",
+        "div.car-info"
+      ]
   },
-  "updatedAt": "2026-01-23T13:35:06.950657+00:00",
+  "updatedAt": "2026-01-24T14:17:04.614522+00:00",
   "source": "extension"
+}
 }
