@@ -29,6 +29,13 @@
       ],
       "updatedAt": "2026-01-23T12:53:20.674Z"
     },
+    "luximmo.com": {
+      "listingLinkPattern": "luxury-property-",
+      "listingLinkIncludes": "luxury-property-",
+      "selectorCards": [
+        "a[href*='luxury-property-'][href$='.html']"
+      ]
+    },
     "address.bg": {
       "listingLinkPattern": null,
       "selectorCards": [
@@ -36,7 +43,7 @@
       ],
       "updatedAt": "2026-01-23T13:35:06.945Z"
     },
-"holmes.bg": {
+    "holmes.bg": {
       "listingLinkPattern": "/obiava/",
       "listingLinkIncludes": "/obiava",
       "selectorTitle": "h3, h2, .offer-title, .title",

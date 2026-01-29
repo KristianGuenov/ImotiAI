@@ -102,6 +102,105 @@
   // Holmes.bg special-case helpers
   // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Luximmo.com special-case helpers
+// ---------------------------------------------------------------------------
+
+function isLuximmoHost(hostname) {
+  const h = String(hostname || "").toLowerCase();
+  return h === "luximmo.com" || h === "www.luximmo.com";
+}
+
+// Luximmo listing pages typically include anchors like:
+// .../luxury-property-46745-... .html
+function closestLuximmoCardRoot(a, maxDepth = 8) {
+  let el = a;
+  for (let i = 0; i < maxDepth && el; i++) {
+    const p = el.parentElement;
+    if (!p) break;
+    let n = 999;
+    try { n = p.querySelectorAll("a[href*='luxury-property-'][href$='.html']").length; } catch (_) { n = 999; }
+    if (n === 1) return p;
+    el = p;
+  }
+  return a.parentElement || a;
+}
+
+function extractLuximmoItemFromAnchor(a) {
+  const root = closestLuximmoCardRoot(a, 8);
+
+  const url = absUrl(a.getAttribute("href") || a.href || "");
+
+  // Prefer heading-like text within the root; fallback to anchor text.
+  let title = null;
+  try {
+    const h = root.querySelector("h1,h2,h3,h4,.title,.property-title,.offer-title");
+    const ht = DomText.normalize(h ? h.textContent : "");
+    if (ht) title = DomText.safeTruncate(ht, 160);
+  } catch (_) {}
+
+  if (!title) {
+    const at = DomText.normalize(a.textContent);
+    if (at) title = DomText.safeTruncate(at, 160);
+  }
+
+  const images = [];
+  try {
+    const imgs = Array.from(root.querySelectorAll("img"));
+    for (const img of imgs) {
+      const src = img.currentSrc || img.getAttribute("src") || img.getAttribute("data-src") || "";
+      const u = absUrl(src);
+      if (isUsefulImageSrc(u)) images.push(u);
+      if (images.length >= 8) break;
+    }
+  } catch (_) {}
+
+  const texts = [];
+  try {
+    const nodes = Array.from(root.querySelectorAll("span,div,p,li,strong,em,small")).slice(0, 140);
+    for (const n of nodes) {
+      const t = DomText.normalize(n.textContent);
+      if (!t) continue;
+      if (t.length < 3 || t.length > 180) continue;
+      texts.push(t);
+      if (texts.length >= 10) break;
+    }
+  } catch (_) {}
+
+  return {
+    title: title,
+    url: url || null,
+    image: images[0] || null,
+    images: Array.from(new Set(images)).slice(0, 8),
+    texts: Array.from(new Set(texts)).slice(0, 10),
+    rawText: DomText.visibleText(root, 650),
+  };
+}
+
+function extractLuximmoItemsFromPage() {
+  // Use Luximmo's stable listing URL pattern as the unit.
+  const anchors = Array.from(document.querySelectorAll("a[href*='luxury-property-'][href$='.html']"))
+    .filter((a) => a && a.getAttribute)
+    .filter((a) => !isProbablyFooterOrNav(a));
+
+  if (!anchors.length) return [];
+
+  const seen = new Set();
+  const out = [];
+
+  for (const a of anchors) {
+    const href = a.getAttribute("href") || "";
+    if (!href) continue;
+    const key = href;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(extractLuximmoItemFromAnchor(a));
+    if (out.length >= 250) break;
+  }
+  return out;
+}
+
+
   function isHolmesHost(hostname) {
     const h = String(hostname || "").toLowerCase();
     return h === "holmes.bg" || h === "www.holmes.bg";
@@ -902,6 +1001,33 @@
       const hostname = location.hostname;
 
       const override = await SiteOverrides.getForHost(hostname);
+
+
+// Luximmo.com list pages: anchor-based extraction using stable listing URL pattern
+// avoids page-level URL fallbacks that collapse many items into 1 unique.
+if (isLuximmoHost(hostname)) {
+  const items = extractLuximmoItemsFromPage();
+  if (items && items.length >= 3) {
+    const timingMs = Math.round(nowMs() - t0);
+    return {
+      ok: true,
+      result: {
+        dataVersion: 1,
+        sourceUrl: location.href,
+        pageTitle: document.title || null,
+        extractedAt: new Date().toISOString(),
+        meta: {
+          siteProfileUsed: hostname,
+          strategyUsed: "luximmo(anchor-root)",
+          timingMs,
+          itemCount: items.length,
+          sampleLinks: items.map((it) => it.url).filter(Boolean).slice(0, 5),
+        },
+        items,
+      },
+    };
+  }
+}
 
       // Prefer override selectorCards if present
       if (override?.selectorCards?.length) {

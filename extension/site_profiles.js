@@ -57,6 +57,84 @@
   // ---- Built-in profiles ----
   const profiles = [
     {
+      id: "luximmo.com",
+      matchHosts: ["luximmo.com", "www.luximmo.com"],
+      discovery: {
+        anchorHrefIncludes: "luxury-property-",
+        cardRootClosestSelectors: ["article", "li", ".property", ".listing", ".result", ".item", ".card", "section", "div"],
+      },
+      timing: {
+        waitForSelector: "a[href*='luxury-property-'][href$='.html']",
+        waitTimeoutMs: 25000,
+      },
+      pagination: {
+        nextSelectors: [
+          "link[rel='next']",
+          "a[rel='next']",
+          ".pagination a.next",
+          ".pagination a[rel='next']",
+          "a[title*='Следваща']",
+          "a[aria-label*='Next']",
+        ],
+      },
+      nested: {
+        enabled: true,
+      },
+    },
+
+    {
+      id: "domaza.bg",
+      matchHosts: ["domaza.bg", "www.domaza.bg"],
+      discovery: {
+        anchorHrefIncludes: "-p/",
+        cardRootClosestSelectors: ["article", "li", ".offer", ".result", ".item", ".listing", ".card", "section", "div"],
+      },
+      timing: {
+        waitForSelector: "a[href*='-p/']",
+        waitTimeoutMs: 25000,
+      },
+      pagination: {
+        nextSelectors: [
+          "link[rel='next']",
+          "a[rel='next']",
+          ".pagination a.next",
+          ".pagination a[rel='next']",
+          "a[title*='Следваща']",
+          "a[aria-label*='Next']",
+        ],
+      },
+      nested: {
+        enabled: true,
+      },
+    },
+
+    {
+      id: "arcoreal.bg",
+      matchHosts: ["arcoreal.bg", "www.arcoreal.bg"],
+      discovery: {
+        anchorHrefIncludes: "/оферти/",
+        cardRootClosestSelectors: ["tr", "article", "li", ".offer", ".result", ".item", ".listing", ".card", "section", "div"],
+      },
+      timing: {
+        waitForSelector: "a[href*='/оферти/'], a[href*='%D0%BE%D1%84%D0%B5%D1%80%D1%82%D0%B8/']",
+        waitTimeoutMs: 25000,
+      },
+      pagination: {
+        nextSelectors: [
+          "link[rel='next']",
+          "a[rel='next']",
+          ".pagination a.next",
+          ".pagination a[rel='next']",
+          "a[title*='Следваща']",
+          "a[aria-label*='Next']",
+        ],
+      },
+      nested: {
+        enabled: true,
+      },
+    },
+
+    {
       id: "imot.bg",
       matchHosts: ["imot.bg", "www.imot.bg"],
       discovery: {
@@ -107,32 +185,6 @@
         enabled: true,
       },
     },
-    {
-      id: "holmes.bg",
-      matchHosts: ["holmes.bg", "www.holmes.bg"],
-      discovery: {
-        anchorHrefIncludes: "/obiava/",
-        cardRootClosestSelectors: ["article", "li", "div", "section"],
-      },
-      timing: {
-        waitForSelector: "a[href^='/obiava/']",
-        waitTimeoutMs: 20000,
-      },
-      pagination: {
-        nextSelectors: [
-          "link[rel='next']",
-          "a[rel='next']",
-          ".pagination a.next",
-          ".pagination a[rel='next']",
-          "a[title*='Следваща']",
-          "a[aria-label*='Next']",
-        ],
-      },
-      nested: {
-        enabled: true,
-      },
-    },
-
   ];
 
   window.__imotiBuiltInProfiles = profiles;

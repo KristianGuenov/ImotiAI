@@ -45,29 +45,31 @@ Imot bg     OK
 Imoti.net.  OK
 Imoti.info. OK
 Bazar.bg Real Estate. OK
+Address.bg - OK
+Holmes.bg - OK
+Luximmo.bg - OK
+domaza.bg - OK
 
-
-Address.bg
 Unique Estates - load more
-Luximmo.bg
-BulgarianProperties.bg
-Mirela.bg 
 Yavlena  - infinite scroll 
+homes.bg - infinite scroll
+
+Mirela.bg 
+
 Building Box
 Realistimo
 
 Homes2u.bg
-Holmes.bg - leave for now
 Imoteka.bg - leave for now
-
-
-imooti.com
-homes.bg
-realestates.bg
 dskhome
+BulgarianProperties.bg
+
+imoti.com
+
+realestates.bg
+
 suprimmo 
 superimoti.bg
 property.bg
 era.bg
 arcoreal.bg
-domaza.bg

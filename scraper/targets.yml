@@ -1,5 +1,24 @@
 
 
+- name: mirela_bg_sale
+  url: "https://www.mirela.bg/index.php?p=offer_list&order_by=1&type=1&ac_s=&ac_v=&map=28.223876953125004%7C45.89000815866184%7C23.060302734375004%7C39.30029918615029%7C7&price_from=&price_to=&area_from=&area_to=&floor_from=&floor_to=&bedrooms=&bathrooms=&sea_side=&has_upkeep=&yearround_use=&page=1"
+  mode: pagination
+  max_pages: 100
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: luximmo_bg_sale
+  url: "https://www.luximmo.com/sales/bulgaria/selectsya/"
+  mode: pagination
+  max_pages: 200
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
 
 - name: holmes_bg_sale
   url: "https://www.holmes.bg/prodazhba/grad-sofiya/abdovitsa?raioni=138~1~2~86~3~4"
@@ -384,7 +403,7 @@
 - name: arcoreal_bg_sale
   url: "https://arcoreal.bg/%D0%BE%D1%84%D0%B5%D1%80%D1%82%D0%B8?t=2&ca=-1&pfr=&pto=&afr=&ato=&ffr=-100&fto=100&country-name=1&c=1&l%5B%5D=&page=1&limit=50"
   mode: pagination
-  max_pages: 30
+  max_pages: 100
   delay_ms: 1500
   wait_until: domcontentloaded
   timeout_ms: 45000
