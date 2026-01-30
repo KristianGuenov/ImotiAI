@@ -49,27 +49,29 @@ Address.bg - OK
 Holmes.bg - OK
 Luximmo.bg - OK
 domaza.bg - OK
+Mirela.bg  - OK
+arcoreal.bg - OK
+suprimmo  - OK
 
+Scroll
 Unique Estates - load more
 Yavlena  - infinite scroll 
 homes.bg - infinite scroll
 
-Mirela.bg 
 
+Currently
 Building Box
 Realistimo
 
+Later - buggy
 Homes2u.bg
 Imoteka.bg - leave for now
 dskhome
 BulgarianProperties.bg
 
+Next
 imoti.com
-
 realestates.bg
-
-suprimmo 
-superimoti.bg
 property.bg
 era.bg
-arcoreal.bg
+

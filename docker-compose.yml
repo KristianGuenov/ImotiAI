@@ -51,6 +51,10 @@ services:
       # Make runner look here (matches your default anyway)
       SITE_PROFILES_PATH: /app/site_profiles.json
 
+      # Realistimo (Cloudflare-protected) persistent session (optional)
+      REALISTIMO_PROFILE_DIR: /data/realistimo-profile
+      REALISTIMO_STORAGE_STATE_PATH: /data/realistimo-profile/storage_state.json
+
       # Detail runner defaults (can be overridden on CLI)
       API_BASE: http://api:8787
       DETAIL_RULES_FILE: /app/scraper/detail_rules.yml
@@ -65,6 +69,9 @@ services:
       - ./extension/content.js:/app/content.js:ro
       - ./scraper/detail_rules.yml:/app/scraper/detail_rules.yml:ro
       - ./scraper/detail_extractor.js:/app/scraper/detail_extractor.js:ro
+
+      # Realistimo persistent browser profile (created on host)
+      - ./data/realistimo-profile:/data/realistimo-profile
 
       # ✅ this is the important mount: repo-root file -> what runner reads
       - ./site_profiles.json:/app/site_profiles.json:ro

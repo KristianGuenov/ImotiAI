@@ -13,7 +13,6 @@
         "div.card-body"
       ],
       "updatedAt": "2026-01-23T01:02:40.653Z"
-    
     },
     "imoteka.bg": {
       "listingLinkPattern": null,
@@ -59,8 +58,52 @@
         "div.card-body",
         "div.car-info"
       ]
+    },
+    "updatedAt": "2026-01-24T14:17:04.614522+00:00",
+    "source": "extension",
+    "dskhome.bg": {
+      "listingLinkPattern": null,
+      "selectorCards": [
+        "div.listing-data"
+      ],
+      "updatedAt": "2026-01-26T03:37:30.871Z"
+    },
+    "www.bulgarianproperties.com": {
+      "listingLinkPattern": null,
+      "selectorCards": [
+        "div.component.component-property-item"
+      ],
+      "updatedAt": "2026-01-25T17:21:53.380Z"
+    },
+    "www.holmes.bg": {
+      "listingLinkPattern": "/obiava/",
+      "selectorCards": [
+        "div.card-body"
+      ],
+      "updatedAt": "2026-01-24T14:17:04.599Z"
+    },
+    "www.luximmo.com": {
+      "listingLinkPattern": null,
+      "selectorCards": [
+        "div.card.mb-4"
+      ],
+      "updatedAt": "2026-01-24T20:33:53.831Z"
+    },
+    "buildingbox.bg": {
+      "listingLinkPattern": null,
+      "selectorCards": [
+        "div.item-listing-wrap.hz-item-gallery-js"
+      ],
+      "updatedAt": "2026-01-29T04:13:04.774Z"
+    },
+    "realistimo.com": {
+      "listingLinkPattern": null,
+      "selectorCards": [
+        "div.row.align-items-center"
+      ],
+      "updatedAt": "2026-01-30T01:01:46.337Z"
+    }
   },
-  "updatedAt": "2026-01-24T14:17:04.614522+00:00",
+  "updatedAt": "2026-01-30T01:01:46.380575+00:00",
   "source": "extension"
-}
 }

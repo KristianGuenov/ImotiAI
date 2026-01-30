@@ -175,13 +175,50 @@ class PlaywrightExtractor:
             return ""
 
     async def _new_context(self, browser: Browser, base_url: str = "") -> BrowserContext:
-        ctx = await browser.new_context(
-            user_agent=self.user_agent,
+        state_path = None
+        if self._is_realistimo(base_url or ""):
+            state_path = self._realistimo_state_path()
+            if state_path and not os.path.exists(state_path):
+                state_path = None
+            # Debug: print whether we found a Realistimo storage_state file
+            try:
+                if state_path:
+                    print(f"[realistimo] using storage_state={state_path}")
+                else:
+                    print("[realistimo] no storage_state file found (will likely be challenged)")
+            except Exception:
+                pass
+
+        # Realistimo/Cloudflare is sensitive to fingerprint; use stable locale/headers.
+        extra_headers = {"Accept-Language": os.getenv("REALISTIMO_ACCEPT_LANGUAGE", "bg-BG,bg;q=0.9,en-US;q=0.8,en;q=0.7")}
+
+        # Build context kwargs (Realistimo sometimes needs stable locale/headers to keep Cloudflare satisfied)
+        is_real = self._is_realistimo(base_url or "")
+        ctx_kwargs = dict(
+            user_agent=os.getenv("REALISTIMO_USER_AGENT", self.user_agent) if is_real else self.user_agent,
             viewport={"width": 1365, "height": 900},
             java_script_enabled=True,
             bypass_csp=True,
             ignore_https_errors=True,
+            storage_state=state_path,
         )
+        if is_real:
+            ctx_kwargs["locale"] = os.getenv("REALISTIMO_LOCALE", "bg-BG")
+            ctx_kwargs["extra_http_headers"] = {
+                "Accept-Language": os.getenv(
+                    "REALISTIMO_ACCEPT_LANGUAGE",
+                    "bg-BG,bg;q=0.9,en-US;q=0.8,en;q=0.7",
+                )
+            }
+
+        ctx = await browser.new_context(**ctx_kwargs)
+
+        # Load site overrides produced by the profile sink (site_profiles.json) and expose to the injected content script.
+        try:
+            overrides = self._load_site_overrides()
+            await ctx.add_init_script(script=f"window.__SITE_OVERRIDES__ = {json.dumps(overrides)};")
+        except Exception:
+            await ctx.add_init_script(script="window.__SITE_OVERRIDES__ = {};")
 
         # Some portals run scripts that reference extension APIs (chrome.*). Provide a minimal stub.
         await ctx.add_init_script(
@@ -192,7 +229,17 @@ class PlaywrightExtractor:
                 "    if (typeof chrome !== 'undefined') return;\n"
                 "    var c = {};\n"
                 "    function mkArea(area){\n"
-                "      area.get = area.get || function(_,cb){ cb && cb({}); };\n"
+                "      area.get = area.get || function(keys,cb){\n"
+                "        try {\n"
+                "          var out = {};\n"
+                "          if (keys && typeof keys === 'object') {\n"
+                "            if (Object.prototype.hasOwnProperty.call(keys,'siteOverrides')) {\n"
+                "              out.siteOverrides = (window.__SITE_OVERRIDES__ || keys.siteOverrides || {});\n"
+                "            }\n"
+                "          }\n"
+                "          cb && cb(out);\n"
+                "        } catch (e) { cb && cb({}); }\n"
+                "      };\n"
                 "      area.set = area.set || function(_,cb){ cb && cb(); };\n"
                 "      area.remove = area.remove || function(_,cb){ cb && cb(); };\n"
                 "      return area;\n"
@@ -311,6 +358,74 @@ class PlaywrightExtractor:
         except Exception:
             return ""
 
+
+    def _is_realistimo(self, url: str) -> bool:
+        h = self._host_of(url)
+        return h.endswith("realistimo.com")
+
+    def _realistimo_state_path(self) -> Optional[str]:
+        # Stored cookies/localStorage used to reuse a legitimate session across runs.
+        # Path is derived from REALISTIMO_PROFILE_DIR (preferred) or REALISTIMO_STORAGE_STATE.
+        p = os.getenv("REALISTIMO_STORAGE_STATE") or os.getenv("REALISTIMO_STORAGE_STATE_PATH")
+        if p:
+            return p
+        d = os.getenv("REALISTIMO_PROFILE_DIR")
+        if not d:
+            return None
+        try:
+            os.makedirs(d, exist_ok=True)
+        except Exception:
+            pass
+        return os.path.join(d, "storage_state.json")
+
+    def _realistimo_interactive(self) -> bool:
+        # Use interactive mode when you can solve Cloudflare/Turnstile in a real browser once.
+        return os.getenv("REALISTIMO_INTERACTIVE", "0") == "1" or os.getenv("REALISTIMO_HEADFUL", "0") == "1"
+
+    def _realistimo_solve_timeout_ms(self) -> int:
+        try:
+            return int(os.getenv("REALISTIMO_SOLVE_TIMEOUT_MS", "300000"))  # 5 minutes
+        except Exception:
+            return 300000
+
+    async def _realistimo_wait_for_listings(self, page: Page, timeout_ms: int) -> bool:
+        # Realistimo's results often render after you scroll once (lazy hydration).
+        # We scroll a bit and wait until at least one offer link appears.
+        sel = "a[href*='offer-']"
+        try:
+            try:
+                await page.mouse.wheel(0, 900)
+            except Exception:
+                await page.evaluate("() => window.scrollBy(0, 900)")
+            await page.wait_for_timeout(800)
+            await page.wait_for_selector(sel, timeout=timeout_ms)
+            return True
+        except Exception:
+            return False
+
+    def _load_site_overrides(self) -> Dict[str, Any]:
+        # Reads overrides from site_profiles.json (profile sink output).
+        # Supported shapes:
+        #   {"siteOverrides": {...}}
+        #   {...}  (where top-level already is overrides dict)
+        paths: List[str] = []
+        env_path = os.getenv("SITE_PROFILES_JSON") or os.getenv("SITE_OVERRIDES_JSON")
+        if env_path:
+            paths.append(env_path)
+        paths.extend(["site_profiles.json", "scraper/site_profiles.json", "data/site_profiles.json"])
+        for p in paths:
+            try:
+                if not p or not os.path.exists(p):
+                    continue
+                with open(p, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict) and "siteOverrides" in data and isinstance(data["siteOverrides"], dict):
+                    return data["siteOverrides"]
+                if isinstance(data, dict):
+                    return data
+            except Exception:
+                continue
+        return {}
     def _is_imotbg(self, url: str) -> bool:
         h = self._host_of(url)
         return h.endswith("imot.bg") or h.endswith("www.imot.bg")
@@ -564,49 +679,6 @@ class PlaywrightExtractor:
         urls = sorted(set(urls))
         return "|".join(urls)
 
-    def _is_holmesbg(self, url: str) -> bool:
-        try:
-            return "holmes.bg" in (url or "")
-        except Exception:
-            return False
-
-    async def _wait_holmes_results_ready(self, page: Page, timeout_ms: int) -> None:
-        """Holmes often hydrates listings after initial DOM load.
-
-        Without a short readiness gate, extraction can capture only the first row of cards.
-        This waits until the listing link count stabilizes or reaches a typical page size.
-        """
-        selector = "a[href^='/obiava/']"
-
-        # Cap the gate time so it never blocks the whole run.
-        deadline = time.monotonic() + (min(int(timeout_ms or 0), 15_000) / 1000.0)
-        last_count = -1
-        stable_since: Optional[float] = None
-
-        while True:
-            try:
-                count = await page.locator(selector).count()
-            except Exception:
-                count = 0
-
-            # Typical Holmes pages show up to 20 results ("1-20").
-            if count >= 20:
-                return
-
-            if count > 0 and count == last_count:
-                if stable_since is None:
-                    stable_since = time.monotonic()
-                elif (time.monotonic() - stable_since) >= 1.0:
-                    return
-            else:
-                stable_since = None
-                last_count = count
-
-            if time.monotonic() >= deadline:
-                return
-
-            await page.wait_for_timeout(250)
-
     def _item_key(self, item: Dict[str, Any]) -> str:
         u = item.get("url")
         if isinstance(u, str) and u:
@@ -635,13 +707,28 @@ class PlaywrightExtractor:
         last_id: Optional[int] = None
 
         try:
-            await page.goto(target.url, wait_until=target.wait_until, timeout=target.timeout_ms)
+            resp = await page.goto(target.url, wait_until=target.wait_until, timeout=target.timeout_ms)
+            # Realistimo is protected by Cloudflare. If we are challenged/blocked, either stop cleanly
+            # (headless runs) or allow an operator to solve once (interactive/headful runs) and persist cookies.
+            if self._is_realistimo(target.url) and resp is not None:
+                st = None
+                try:
+                    st = resp.status
+                except Exception:
+                    pass
+                if st in (401, 403, 429):
+                    if self._realistimo_interactive():
+                        print(f"[{target.name}] Realistimo challenge detected (HTTP {st}). If running headful, solve it in the browser window...")
+                        ok = await self._realistimo_wait_for_listings(page, self._realistimo_solve_timeout_ms())
+                        if not ok:
+                            print(f"[{target.name}] STOP blocked_or_no_list page=1 url={target.url}")
+                            return 0, 0, None
+                    else:
+                        print(f"[{target.name}] STOP blocked page=1 url={target.url}")
+                        return 0, 0, None
+
             await page.wait_for_timeout(700)
             await self._ensure_extractor(page)
-
-            # holmes.bg often hydrates listings after initial DOM load; wait until results are ready
-            if self._is_holmesbg(target.url):
-                await self._wait_holmes_results_ready(page, target.timeout_ms)
 
             # imoti.info gating: ensure we are not stuck on /choose/ before extracting anything
             if self._is_imotiinfo(page.url or "") and "/choose/" in (page.url or ""):
@@ -853,10 +940,6 @@ class PlaywrightExtractor:
                 await page.wait_for_timeout(500)
                 await self._ensure_extractor(page)
 
-                # holmes.bg: wait for hydrated results after navigation
-                if self._is_holmesbg(target.url):
-                    await self._wait_holmes_results_ready(page, target.timeout_ms)
-
                 if delay_ms:
                     jitter = random.randint(0, min(600, delay_ms))
                     await page.wait_for_timeout(delay_ms + jitter)
@@ -887,6 +970,14 @@ class PlaywrightExtractor:
             return pages_visited, posts_done, last_id
 
         finally:
+            # Persist Realistimo session cookies/localStorage so future headless runs can reuse a solved challenge.
+            if self._is_realistimo(target.url):
+                state_path = self._realistimo_state_path()
+                if state_path:
+                    try:
+                        await ctx.storage_state(path=state_path)
+                    except Exception:
+                        pass
             await ctx.close()
 
 
@@ -927,6 +1018,16 @@ class ScrapeRunner:
             targets = [t for t in targets if t.name == only]
             if not targets:
                 raise ValueError(f"No target named '{only}' in {self.targets_file}")
+
+        # If you need to manually solve Cloudflare/Turnstile for Realistimo, run only that target with:
+        #   REALISTIMO_HEADFUL=1 REALISTIMO_PROFILE_DIR=/data/realistimo-profile ...
+        # Note: headful inside Docker may require a host-browser bootstrap; see instructions.
+        if os.getenv("REALISTIMO_HEADFUL", "0") == "1":
+            for _t in targets:
+                h = (urlsplit(_t.url).hostname or "").lower()
+                if h.endswith("realistimo.com"):
+                    self.headless = False
+                    break
 
         api = ApiClient(self.api_endpoint, self.api_key)
 

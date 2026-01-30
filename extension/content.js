@@ -320,6 +320,7 @@ function extractLuximmoItemsFromPage() {
       "/listing/",
       "/ad/",
       "/property/",
+      "/properties/",
       "/imot/",
       "/annonce/",
       "/objava/",

@@ -1,4 +1,43 @@
 
+- name: era_bg_sale
+  url: "https://www.era.bg/properties/sell?qs=1&SearchKeyword="
+  mode: pagination
+  max_pages: 500
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: realistimo_bg_sale
+  url: "https://realistimo.com/bg/buy/sofia-oblast-bg/?addressIds%5B0%5D=4668&currency=EUR"
+  mode: pagination
+  max_pages: 250
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: buildingbox_bg_sale
+  url: "https://buildingbox.bg/search-results/?status%5B%5D=prodava&min-price=&max-price=&min-area=&max-area="
+  mode: pagination
+  max_pages: 200
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: suprimmo_bg_sale
+  url: "https://www.suprimmo.bg/prodajba/bulgaria/selectsya/"
+  mode: pagination
+  max_pages: 500
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
 
 - name: mirela_bg_sale
   url: "https://www.mirela.bg/index.php?p=offer_list&order_by=1&type=1&ac_s=&ac_v=&map=28.223876953125004%7C45.89000815866184%7C23.060302734375004%7C39.30029918615029%7C7&price_from=&price_to=&area_from=&area_to=&floor_from=&floor_to=&bedrooms=&bathrooms=&sea_side=&has_upkeep=&yearround_use=&page=1"
