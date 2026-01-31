@@ -52,6 +52,9 @@ domaza.bg - OK
 Mirela.bg  - OK
 arcoreal.bg - OK
 suprimmo  - OK
+Building Box - OK
+realestates.bg - OK
+property.bg - OK
 
 Scroll
 Unique Estates - load more
@@ -60,10 +63,11 @@ homes.bg - infinite scroll
 
 
 Currently
-Building Box
-Realistimo
+
 
 Later - buggy
+era.bg
+Realistimo
 Homes2u.bg
 Imoteka.bg - leave for now
 dskhome
@@ -71,7 +75,6 @@ BulgarianProperties.bg
 
 Next
 imoti.com
-realestates.bg
-property.bg
-era.bg
+
+
 

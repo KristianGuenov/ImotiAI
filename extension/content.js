@@ -765,8 +765,90 @@ function extractLuximmoItemsFromPage() {
 
       return candidates.length ? { type: "click", el: candidates[0].el, score: candidates[0].score } : null;
     }
-
     static async navigateNext() {
+      // 1) Domain override: click a user-picked "Next page" control if provided.
+      const host = location.hostname;
+      let ov = null;
+      try { ov = await SiteOverrides.getForHost(host); } catch (_) { ov = null; }
+
+      const overrideSelector = ov ? (
+        ov.nextPageSelector ||
+        ov.nextClickSelector ||
+        ov.nextPageButtonSelector ||
+        ov.paginationNextSelector ||
+        ov.nextSelector
+      ) : null;
+
+      const tryQuery = (sel) => {
+        if (!sel) return null;
+        try {
+          const el = document.querySelector(String(sel));
+          return el || null;
+        } catch (_) {
+          return null;
+        }
+      };
+
+      const altFromIdSelector = (sel) => {
+        // If the picker returned something like: button#TemplateHolder\|c0\|...
+        // it is valid CSS, but some environments may choke on escaping. We fall back to [id='...'].
+        const m = /^([a-zA-Z0-9_-]+)?#(.+)$/.exec(String(sel || ""));
+        if (!m) return null;
+        const tag = m[1] ? m[1] : "";
+        const idEsc = m[2];
+        // Unescape any CSS escapes (e.g. \| -> |, \: -> :).
+        const idRaw = idEsc.replace(/\\(.)/g, "$1");
+        const safeId = idRaw.replace(/'/g, "\\'");
+        return (tag ? tag : "") + "[id='" + safeId + "']";
+      };
+
+      const isDisabled = (el) => {
+        if (!el) return true;
+        return el.hasAttribute("disabled") || el.getAttribute("aria-disabled") === "true";
+      };
+
+      const clickEl = (el) => {
+        if (!el) return false;
+        try { el.scrollIntoView({ block: "center" }); } catch (_) {}
+        try {
+          el.click();
+          return true;
+        } catch (_) {
+          // Some controls require dispatching a native MouseEvent
+          try {
+            el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+            return true;
+          } catch (_) {
+            return false;
+          }
+        }
+      };
+
+      if (overrideSelector) {
+        let sel = String(overrideSelector);
+
+        // First attempt
+        let el = tryQuery(sel);
+
+        // Some sites only render pagination after scrolling
+        if (!el) {
+          try { window.scrollTo(0, document.body.scrollHeight); } catch (_) {}
+          await new Promise((r) => setTimeout(r, 350));
+          el = tryQuery(sel);
+        }
+
+        // Fallback if the selector is an escaped id selector
+        if (!el) {
+          const alt = altFromIdSelector(sel);
+          if (alt) el = tryQuery(alt);
+        }
+
+        if (el && Navigation._isVisible(el) && !isDisabled(el)) {
+          if (clickEl(el)) return true;
+        }
+      }
+
+      // 2) Heuristic fallback
       const next = Navigation.findNextControl();
       if (!next) return false;
 
@@ -787,9 +869,7 @@ function extractLuximmoItemsFromPage() {
         return true;
       }
       if (next.type === "click" && next.el) {
-        next.el.scrollIntoView({ block: "center" });
-        next.el.click();
-        return true;
+        return clickEl(next.el);
       }
       return false;
     }

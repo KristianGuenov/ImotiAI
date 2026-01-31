@@ -272,7 +272,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg?.type === "START_PICKER") {
       const tab = await getActiveTab();
       await ensureContentScript(tab.id);
-      const resp = await sendToTab(tab.id, { type: "START_PICKER" });
+      // optional kind: "card" (default) or "next" (pagination next button)
+      const resp = await sendToTab(tab.id, { type: "START_PICKER", kind: msg.kind || "card" });
+      sendResponse(resp);
+      return;
+    }
+
+    // Convenience alias for pagination-next picking.
+    if (msg?.type === "START_PICKER_NEXT") {
+      const tab = await getActiveTab();
+      await ensureContentScript(tab.id);
+      const resp = await sendToTab(tab.id, { type: "START_PICKER", kind: "next" });
       sendResponse(resp);
       return;
     }

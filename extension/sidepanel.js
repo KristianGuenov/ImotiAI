@@ -6,7 +6,8 @@ const $ = (id) => document.getElementById(id);
 let lastResult = null;
 let isRunningBatch = false;
 let lastOnboard = null;
-let picked = null;
+let pickedCard = null;
+let pickedNext = null;
 
 function setDot(dotId, kind) {
   const el = $(dotId);
@@ -84,12 +85,25 @@ function renderOnboardOut(obj) {
 }
 
 function renderPicked(p) {
-  picked = p;
-  if (!$("pickedSelector")) return;
-  $("pickedSelector").textContent = p?.selector || "—";
-  $("pickedPattern").textContent = p?.listingLinkPattern || "—";
-  $("pickedMatches").textContent = String(p?.matchCount ?? 0);
-  $("btnSaveOverride").disabled = !p?.selector;
+  const kind = p?.kind || "card";
+  if (kind === "next") {
+    pickedNext = p;
+  } else {
+    pickedCard = p;
+  }
+
+  if ($("pickedSelector")) {
+    $("pickedSelector").textContent = pickedCard?.selector || "—";
+    $("pickedPattern").textContent = pickedCard?.listingLinkPattern || "—";
+    $("pickedMatches").textContent = String(pickedCard?.matchCount ?? 0);
+  }
+
+  if ($("pickedNextSelector")) {
+    $("pickedNextSelector").textContent = pickedNext?.selector || "—";
+    $("pickedNextMatches").textContent = String(pickedNext?.matchCount ?? 0);
+  }
+
+  if ($("btnSaveOverride")) $("btnSaveOverride").disabled = !pickedCard?.selector;
 }
 
 async function doOnboard() {
@@ -113,12 +127,32 @@ async function startPick() {
   renderOnboardOut("Pick mode started. Click a listing card on the page…");
 
   if ($("btnPick")) $("btnPick").disabled = true;
+  if ($("btnPickNext")) $("btnPickNext").disabled = true;
   if ($("btnPickStop")) $("btnPickStop").disabled = false;
 
-  const resp = await sendMessage({ type: "START_PICKER" });
+  const resp = await sendMessage({ type: "START_PICKER", kind: "card" });
   if (!resp?.ok) {
     setOnboardStatus("Pick start failed", "err");
     if ($("btnPick")) $("btnPick").disabled = false;
+    if ($("btnPickNext")) $("btnPickNext").disabled = false;
+    if ($("btnPickStop")) $("btnPickStop").disabled = true;
+    renderOnboardOut(resp);
+  }
+}
+
+async function startPickNext() {
+  setOnboardStatus("Pick mode… click NEXT", "warn");
+  renderOnboardOut("Pick mode started. Click the pagination NEXT button on the page…");
+
+  if ($("btnPick")) $("btnPick").disabled = true;
+  if ($("btnPickNext")) $("btnPickNext").disabled = true;
+  if ($("btnPickStop")) $("btnPickStop").disabled = false;
+
+  const resp = await sendMessage({ type: "START_PICKER_NEXT" });
+  if (!resp?.ok) {
+    setOnboardStatus("Pick start failed", "err");
+    if ($("btnPick")) $("btnPick").disabled = false;
+    if ($("btnPickNext")) $("btnPickNext").disabled = false;
     if ($("btnPickStop")) $("btnPickStop").disabled = true;
     renderOnboardOut(resp);
   }
@@ -134,17 +168,19 @@ async function stopPick() {
 
   setOnboardStatus("Pick stopped", "ok");
   if ($("btnPick")) $("btnPick").disabled = false;
+  if ($("btnPickNext")) $("btnPickNext").disabled = false;
   if ($("btnPickStop")) $("btnPickStop").disabled = true;
 }
 
 async function saveOverride() {
-  if (!picked?.selector) return;
+  if (!pickedCard?.selector) return;
 
   // store minimal override: selectorCards + link pattern (if found)
   const hostname = $("sitePill").textContent || "";
   const override = {
-    selectorCards: [picked.selector],
-    listingLinkPattern: picked.listingLinkPattern || null,
+    selectorCards: [pickedCard.selector],
+    listingLinkPattern: pickedCard.listingLinkPattern || null,
+    ...(pickedNext?.selector ? { nextPageSelector: pickedNext.selector } : {}),
   };
 
   setOnboardStatus("Saving override…", "warn");
@@ -298,6 +334,7 @@ function wire() {
   // Onboarding
   if ($("btnOnboard")) $("btnOnboard").addEventListener("click", doOnboard);
   if ($("btnPick")) $("btnPick").addEventListener("click", startPick);
+  if ($("btnPickNext")) $("btnPickNext").addEventListener("click", startPickNext);
   if ($("btnPickStop")) $("btnPickStop").addEventListener("click", stopPick);
   if ($("btnSaveOverride")) $("btnSaveOverride").addEventListener("click", saveOverride);
 }
@@ -308,6 +345,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     renderPicked(msg.result);
     setOnboardStatus("Picked", "ok");
     if ($("btnPick")) $("btnPick").disabled = false;
+    if ($("btnPickNext")) $("btnPickNext").disabled = false;
     if ($("btnPickStop")) $("btnPickStop").disabled = true;
     renderOnboardOut({ pickerResult: msg.result });
   }

@@ -1,3 +1,22 @@
+- name: property_bg_sale
+  url: "https://www.property.bg/search/index.php?country_id=1&sregion=0&stown=0&form_currency_select=EUR&minprice=&maxprice=&action=1&advance_search=1&searchform=1&advance=1&tab=1&spredlog=innear&csel=&hmsf=1&page=1"
+  mode: pagination
+  max_pages: 500
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: realestates_bg_sale
+  url: "https://en.realestates.bg/obiavi/imoti-prodajbi/apartamenti-stai/?qnbc=1"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
 
 - name: era_bg_sale
   url: "https://www.era.bg/properties/sell?qs=1&SearchKeyword="

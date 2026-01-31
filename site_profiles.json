@@ -102,8 +102,23 @@
         "div.row.align-items-center"
       ],
       "updatedAt": "2026-01-30T01:01:46.337Z"
+    },
+    "www.era.bg": {
+      "listingLinkPattern": "/properties/",
+      "nextPageSelector": "button#TemplateHolder\\|c0\\|c3\\|c5\\|c4\\|c3\\|c0\\|Root\\|c6",
+      "selectorCards": [
+        "div.Content"
+      ],
+      "updatedAt": "2026-01-31T02:35:48.017Z"
+    },
+    "www.property.bg": {
+      "listingLinkPattern": null,
+      "selectorCards": [
+        "div.grid-container"
+      ],
+      "updatedAt": "2026-01-31T20:58:03.656Z"
     }
   },
-  "updatedAt": "2026-01-30T01:01:46.380575+00:00",
+  "updatedAt": "2026-01-31T20:58:03.660017+00:00",
   "source": "extension"
 }
