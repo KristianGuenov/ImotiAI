@@ -522,6 +522,8 @@ class PlaywrightExtractor:
                         "Cannot read properties of undefined (reading 'id')",
                         "Cannot read properties of undefined (reading 'OverlayView')",
                         "Permissions policy violation: Geolocation",
+                        "hideLuxSelection is not defined",
+                        "Unexpected string",
                     )
                     if any(s in (msg or "") for s in noisy) or any(s in (stack or "") for s in noisy):
                         return

@@ -55,6 +55,7 @@ suprimmo  - OK
 Building Box - OK
 realestates.bg - OK
 property.bg - OK
+imoti.com - OK
 
 Scroll
 Unique Estates - load more
@@ -74,7 +75,7 @@ dskhome
 BulgarianProperties.bg
 
 Next
-imoti.com
+
 
 
 

@@ -1,3 +1,243 @@
+- name: UnE_bg_sale
+  url: "https://ues.bg/en/bgr/imoti/prodajbi/sofia/all"
+  mode: load_more
+  max_pages: 150
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imoti_com_sale2
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya?sraion=6~10~11~13~14~"
+  mode: pagination
+  max_pages: 500
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imot_com_sale3
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya?sraion=8~104~3835~3846~144~105~6101~"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imot_com_sale4
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya?sraion=3832~15~17~18~"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imot_com_sale5
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya?sraion=16~19~6195~146~147~20~106~107~108~109~148~21~24~22~"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imot_com_sale6
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya?sraion=23~110~26~111~112~113~114~27~28~29~30~31~116~"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imot_com_sale7
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya?sraion=115~6196~152~122~153~6197~123~124~126~5133~6198~5136~154~43~"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imot_com_sale8
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya?sraion=32~117~33~35~36~37~38~34~"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imot_com_sale9
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya?sraion=39~40~41~42~120~44~45~46~47~121~49~"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imot_com_sale10
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya?sraion=39~40~41~42~120~44~45~46~47~121~49~"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imot_com_sale11
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya?sraion=48~50~51~52~53~155~127~156~128~54~55~56~57~"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imot_com_sale12
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya?sraion=6136~129~130~58~"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imot_com_sale13
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya?sraion=59~131~132~60~61~62~63~64~157~3858~3872~3890~3901~3904~3905~"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imot_com_sale14
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya?sraion=3913~3922~3942~3948~3951~3968~3970~3977~3980~3988~3990~3995~3998~3999~4009~4020~4029~4030~4034~4036~4056~4062~4065~4097~133~4136~"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imot_com_sale15
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya?sraion=5457~65~66~67~68~69~70~71~160~134~136~73~"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imot_com_sale16
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya?sraion=72~135~74~75~76~77~78~137~79~80~81~82~84~85~"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imot_com_sale17
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya/tsentar?pubtype=1~2~3~4~5~6~8~"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imot_com_sale18
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya?pubtype=7~12~13~14~16~17~&sraion=83~119~118~"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imot_com_sale19
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya/partseli?sraion=118~119~83~"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imot_com_sale20
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya/manastirski-livadi?pubtype=1~2~3~4~5~6~8~"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imot_com_sale21
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya/tristaini"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imot_com_sale22
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya/dvustaini"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imot_com_sale23
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya?pubtype=1~4~5~6~"
+  mode: pagination
+  max_pages: 2750
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imoti_com_sale1
+  url: "https://www.imoti.com/prodazhbi/grad-sofiya?sraion=138~1~2~86~3~4~5~6192~7~87~88~89~90~91~139~93~95~96~97~6193~98~140~100~6194~9~102~103~"
+  mode: pagination
+  max_pages: 500
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
 - name: property_bg_sale
   url: "https://www.property.bg/search/index.php?country_id=1&sregion=0&stown=0&form_currency_select=EUR&minprice=&maxprice=&action=1&advance_search=1&searchform=1&advance=1&tab=1&spredlog=innear&csel=&hmsf=1&page=1"
   mode: pagination
