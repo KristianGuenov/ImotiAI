@@ -56,14 +56,15 @@ Building Box - OK
 realestates.bg - OK
 property.bg - OK
 imoti.com - OK
+Unique Estates - OK
 
 Scroll
-Unique Estates - load more
+
 Yavlena  - infinite scroll 
 homes.bg - infinite scroll
 
 
-Currently
+
 
 
 Later - buggy
@@ -74,7 +75,7 @@ Imoteka.bg - leave for now
 dskhome
 BulgarianProperties.bg
 
-Next
+
 
 
 

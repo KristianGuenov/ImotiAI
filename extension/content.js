@@ -942,6 +942,9 @@
 
 
     static _findScrollableContainer(options = {}) {
+      // If caller forces window scroll, skip container detection.
+      if (options && options.forceWindowScroll) return null;
+
       // Explicit selector override (if you know the scroll container)
       const sel = (options && options.scrollContainerSelector) ? String(options.scrollContainerSelector) : "";
       if (sel) {
@@ -951,8 +954,10 @@
         } catch (_) { }
       }
 
+      const preferPattern = (options && options.preferPattern) ? String(options.preferPattern) : "";
+
       // Heuristic: pick a large element that can scroll vertically.
-      // We do NOT require overflowY === 'auto'/'scroll' because some sites use custom scrolling.
+      // Prefer containers that actually contain listing links (when preferPattern is known).
       const candidates = Array.from(document.querySelectorAll("body *")).slice(0, 4000);
       let best = null;
       let bestScore = -Infinity;
@@ -966,7 +971,20 @@
 
           const r = el.getBoundingClientRect();
           const area = Math.max(0, r.width) * Math.max(0, r.height);
-          const score = area + (sh - ch) * 2;
+
+          // If we know the listing URL pattern, prefer containers that include those anchors.
+          let linkBoost = 0;
+          if (preferPattern) {
+            try {
+              const n = el.querySelectorAll(`a[href*='${preferPattern.replace(/'/g, "\\'")}']`).length;
+              // big boost if container clearly holds listing cards
+              if (n >= 10) linkBoost = 40000;
+              else if (n >= 3) linkBoost = 12000;
+              else if (n >= 1) linkBoost = 2500;
+            } catch (_) { }
+          }
+
+          const score = area + (sh - ch) * 2 + linkBoost;
           if (score > bestScore) {
             bestScore = score;
             best = el;
@@ -991,24 +1009,6 @@
           }
         } catch (_) { }
         return false;
-      };
-
-      const isSafeListAnchor = (el) => {
-        if (!el || el.tagName !== "A") return false;
-        const href = el.getAttribute("href") || "";
-        if (!href) return false;
-        if (isLikelyDetailHref(href)) return false;
-        if (!strict) return true;
-        try {
-          const u = new URL(href, location.href);
-          const p = u.pathname || "";
-          const q = u.search || "";
-          if (listPathHint && !p.includes(listPathHint)) return false;
-          if (!/([?&])page=\d+/.test(q) && !/load|more|next|още|покажи|виж/i.test(el.textContent || "")) return false;
-          return true;
-        } catch (_) {
-          return false;
-        }
       };
 
       // Allow explicit selector override
@@ -1166,6 +1166,8 @@
 
       const getUrls = () => {
         try {
+          // If the site profile provides selectorCards, use the same selector-based extraction
+          // as ExtractionRunner (some sites don't render clean repeating direct-children lists).
           if (override && Array.isArray(override.selectorCards) && override.selectorCards.length) {
             const runner = new ExtractionRunner();
             const extracted = runner._extractUsingSelectors(override.selectorCards, preferPattern);
@@ -1177,10 +1179,16 @@
             return out;
           }
 
-          const det = detector.detect();
-          const arr = (det && Array.isArray(det.items)) ? det.items : [];
+          // Fallback: use the structural ListDetector, then run ItemExtractor over its element-items
+          // to obtain URLs (ListDetector returns DOM elements, not {url} objects).
+          const cand = detector.detect();
+          const els = (cand && Array.isArray(cand.items)) ? cand.items : [];
+          if (!els.length) return [];
+
+          const extractor = new ItemExtractor({ preferHrefIncludes: preferPattern });
           const out = [];
-          for (const it of arr) {
+          for (const el of els.slice(0, 800)) {
+            const it = extractor.extractItem(el);
             if (it && it.url) out.push(String(it.url));
           }
           return out;
@@ -1211,9 +1219,11 @@
       let clicks = 0;
       let scrolls = 0;
       let newTotal = 0;
+      let lastScrollHeight = 0;
+      let lastScrollTop = 0;
 
       const forceScrollOnly = !!(opts && opts.forceScrollOnly);
-      const scrollContainer = LoadMore._findScrollableContainer(opts);
+      const scrollContainer = (opts && opts.forceWindowScroll) ? null : LoadMore._findScrollableContainer(opts);
 
       const doScrollToBottom = () => {
         const stepFactor = (opts && opts.scrollStepFactor) ? Number(opts.scrollStepFactor) : 0.85;
@@ -1272,11 +1282,38 @@
           }
         }
 
+        // Scroll-metrics progress (useful when DOM is virtualized and URL counts don't grow)
+        try {
+          const sc = scrollContainer || document.scrollingElement || document.documentElement;
+          const curH = sc ? (sc.scrollHeight || 0) : 0;
+          const curT = sc ? (sc.scrollTop || 0) : 0;
+          if (!lastScrollHeight) lastScrollHeight = curH;
+          if (!lastScrollTop) lastScrollTop = curT;
+          // If scroll height grows or scrollTop moves meaningfully, treat as progress (reset idle)
+          if (curH > lastScrollHeight + 120 || Math.abs(curT - lastScrollTop) > 300) {
+            lastScrollHeight = curH;
+            lastScrollTop = curT;
+            // no-op here; applied below when added==0
+          }
+        } catch (_) {}
+
         const added = seen.size - beforeSize;
         if (added > 0) {
           idle = 0;
           await new Promise((r) => setTimeout(r, Math.max(stepDelayMs, 1200)));
         } else {
+          // If scrolling is still moving/growing, don't count it as idle.
+          try {
+            const sc = scrollContainer || document.scrollingElement || document.documentElement;
+            const curH = sc ? (sc.scrollHeight || 0) : 0;
+            const curT = sc ? (sc.scrollTop || 0) : 0;
+            if ((lastScrollHeight && curH > lastScrollHeight + 120) || (lastScrollTop && Math.abs(curT - lastScrollTop) > 300)) {
+              lastScrollHeight = curH;
+              lastScrollTop = curT;
+              idle = 0;
+              continue;
+            }
+          } catch (_) {}
           idle += 1;
           if (idle >= idleCycles) break;
         }
@@ -1533,14 +1570,11 @@
         : [];
 
       const wrapperCounts = new Map();
-      const wrapperSamples = [];
-
       for (const a of matchingAnchors.slice(0, 400)) {
         const wrap = a.closest("article, li, div");
         if (!wrap) continue;
         const { selector } = buildReusableCardSelector(wrap);
         wrapperCounts.set(selector, (wrapperCounts.get(selector) || 0) + 1);
-        if (wrapperSamples.length < 5) wrapperSamples.push(selector);
       }
 
       const rankedWrappers = Array.from(wrapperCounts.entries())
@@ -1795,4 +1829,4 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   });
   return true;
 });
-}) ();
+})();

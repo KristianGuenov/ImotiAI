@@ -1,6 +1,5 @@
-
-- name: yavlena_com_sale
-  url: https://yavlena.com/bg/sales
+- name: yavlena_com_sale2
+  url: "https://yavlena.com/bg/sales/varna-varna/d3l651?sort=4"
   mode: load_more_then_extract
   max_pages: 1
   post_strategy: per_target
@@ -8,14 +7,34 @@
   load_more:
     preferPattern: /bg/
     forceScrollOnly: true
-    scrollSteps: 20000
-    maxActions: 20000
-    idleCycles: 60
-    initialWaitMs: 10000
-    stepDelayMs: 1100
+    scrollSteps: 25000
+    maxActions: 25000
+    idleCycles: 120
+    initialWaitMs: 12000
+    stepDelayMs: 900
     waitAfterClickMs: 9000
     scrollStepFactor: 0.85
     scrollMinStepPx: 450
+    forceWindowScroll: true
+
+- name: yavlena_com_sale
+  url: "https://yavlena.com/bg/sales/sofia-sofia/d23l4396?sort=4"
+  mode: load_more_then_extract
+  max_pages: 1
+  post_strategy: per_target
+  post_batch_pages: 1
+  load_more:
+    preferPattern: /bg/
+    forceScrollOnly: true
+    scrollSteps: 25000
+    maxActions: 25000
+    idleCycles: 120
+    initialWaitMs: 12000
+    stepDelayMs: 900
+    waitAfterClickMs: 9000
+    scrollStepFactor: 0.85
+    scrollMinStepPx: 450
+    forceWindowScroll: true
   
 - name: ues_bg_sale
   url: "https://ues.bg/en/bgr/imoti/prodajbi/sofia/all?_=1770032359712&&page=1060"
@@ -34,16 +53,6 @@
     waitAfterClickMs: 8000
     scrollStepFactor: 0.85
     scrollMinStepPx: 450
-
-- name: ues2_bg_sale
-  url: "https://ues.bg/en/bgr/imoti/prodajbi/sofia/all"
-  mode: pagination
-  max_pages: 500
-  delay_ms: 1500
-  wait_until: domcontentloaded
-  timeout_ms: 45000
-  post_strategy: per_target
-  post_batch_pages: 50
 
 - name: imoti_com_sale2
   url: "https://www.imoti.com/prodazhbi/grad-sofiya?sraion=6~10~11~13~14~"
