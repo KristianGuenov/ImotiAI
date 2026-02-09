@@ -14,7 +14,13 @@ import time
 
 import httpx
 import yaml
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import (
+    async_playwright,
+    Browser,
+    BrowserContext,
+    Page,
+    TimeoutError as PlaywrightTimeoutError,
+)
 
 
 def utc_now_iso() -> str:
@@ -78,7 +84,9 @@ class TargetsLoader:
                     max_pages=int(item.get("max_pages") or 25),
                     delay_ms=int(item.get("delay_ms") or 1500),
                     load_more=dict(item.get("load_more") or {}),
-                    wait_until=str(item.get("wait_until") or "domcontentloaded").strip(),
+                    wait_until=str(
+                        item.get("wait_until") or "domcontentloaded"
+                    ).strip(),
                     timeout_ms=int(item.get("timeout_ms") or 45_000),
                     post_strategy=str(item.get("post_strategy") or "per_page").strip(),
                     post_batch_pages=int(item.get("post_batch_pages") or 50),
@@ -148,10 +156,12 @@ class PlaywrightExtractor:
         if env_path:
             candidates.append(env_path)
         # Common relative locations depending on WORKDIR/bind mounts
-        candidates.extend([
-            "site_profiles.js",
-            os.path.join("scraper", "site_profiles.js"),
-        ])
+        candidates.extend(
+            [
+                "site_profiles.js",
+                os.path.join("scraper", "site_profiles.js"),
+            ]
+        )
 
         path: Optional[str] = None
         for c in candidates:
@@ -175,7 +185,9 @@ class PlaywrightExtractor:
             self._site_profiles_cache = ""
             return ""
 
-    async def _new_context(self, browser: Browser, base_url: str = "") -> BrowserContext:
+    async def _new_context(
+        self, browser: Browser, base_url: str = ""
+    ) -> BrowserContext:
         ctx = await browser.new_context(
             user_agent=self.user_agent,
             viewport={"width": 1365, "height": 900},
@@ -217,6 +229,7 @@ class PlaywrightExtractor:
         try:
             host = self._host_of(base_url or "")
             if host.endswith("address.bg") or host.endswith("domaza.bg"):
+
                 async def _route(route, request):
                     try:
                         u = (request.url or "").lower()
@@ -235,7 +248,13 @@ class PlaywrightExtractor:
                             return
 
                         # Address.bg map marker/icon requests are often rate-limited (429) and not needed for list scraping
-                        if host.endswith("address.bg") and "/images/map/" in u and u.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg")):
+                        if (
+                            host.endswith("address.bg")
+                            and "/images/map/" in u
+                            and u.endswith(
+                                (".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg")
+                            )
+                        ):
                             await route.abort()
                             return
 
@@ -250,7 +269,6 @@ class PlaywrightExtractor:
         except Exception:
             pass
 
-
         # ✅ Option A: Inject built-in site profiles FIRST (so content.js can use them in Playwright mode)
         sp = self._load_site_profiles_script()
         if sp:
@@ -262,7 +280,11 @@ class PlaywrightExtractor:
     async def _ensure_extractor(self, page: Page) -> None:
         async def _has() -> bool:
             try:
-                return bool(await page.evaluate("() => !!(window.__imotiExtractor && window.__imotiExtractor.run)"))
+                return bool(
+                    await page.evaluate(
+                        "() => !!(window.__imotiExtractor && window.__imotiExtractor.run)"
+                    )
+                )
             except Exception:
                 return False
 
@@ -283,30 +305,108 @@ class PlaywrightExtractor:
             await asyncio.sleep(0.1)
 
         raise RuntimeError("Extractor not initialized (timeout).")
+
     async def _extract(self, page: Page) -> Dict[str, Any]:
+        """Run the in-page extractor with retries across navigations.
+
+        ues.bg (and some other sites) may trigger a navigation on 'load more'. If our
+        evaluate() happens during that navigation, Playwright throws:
+          'Execution context was destroyed...'
+        This wrapper waits for the new document and retries once.
+        """
         await self._ensure_extractor(page)
-        out = await page.evaluate("() => window.__imotiExtractor.run()")
 
-        if not isinstance(out, dict) or not out.get("ok"):
-            err = out.get("error") if isinstance(out, dict) else None
-            raise RuntimeError(err or "Extraction failed (no ok:true)")
+        async def _do() -> Dict[str, Any]:
+            out = await page.evaluate("() => window.__imotiExtractor.run()")
+            if not isinstance(out, dict) or not out.get("ok"):
+                err = out.get("error") if isinstance(out, dict) else None
+                raise RuntimeError(err or "Extraction failed (no ok:true)")
+            result = out.get("result")
+            if not isinstance(result, dict):
+                raise RuntimeError(
+                    "Extraction returned ok:true but missing result object"
+                )
+            return json.loads(json.dumps(result, ensure_ascii=False))
 
-        result = out.get("result")
-        if not isinstance(result, dict):
-            raise RuntimeError("Extraction returned ok:true but missing result object")
-
-        return json.loads(json.dumps(result, ensure_ascii=False))
+        try:
+            return await _do()
+        except Exception as e:
+            msg = str(e)
+            if (
+                "Execution context was destroyed" in msg
+                or "Cannot find context" in msg
+                or "Target closed" in msg
+            ):
+                # Likely in-flight navigation; wait for the new document then retry once.
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=45_000)
+                except Exception:
+                    pass
+                await page.wait_for_timeout(250)
+                await self._ensure_extractor(page)
+                return await _do()
+            raise
 
     async def _navigate_next(self, page: Page) -> bool:
         await self._ensure_extractor(page)
         did = await page.evaluate("() => window.__imotiExtractor.navigateNext()")
         return bool(did)
 
-    async def _load_more(self, page: Page, options: Dict[str, Any]) -> None:
+    async def _load_more(self, page: Page, options: Dict[str, Any]) -> Dict[str, Any]:
+        """Trigger in-page loadMore in a navigation-safe way.
+
+        Some sites (notably ues.bg) change the URL / navigate on 'load more'. When that
+        happens, the JS execution context can be destroyed while evaluate() is running.
+        In that case we *do not* re-click; we wait for the navigation to settle and return
+        a marker so the caller can proceed to extract.
+        """
         await self._ensure_extractor(page)
-        await page.evaluate("(opts) => window.__imotiExtractor.loadMore(opts || {})", options or {})
+        options = options or {}
 
-
+        url_before = page.url
+        try:
+            out = await page.evaluate(
+                "(opts) => window.__imotiExtractor.loadMore(opts || {})", options
+            )
+            if isinstance(out, dict):
+                # attach URL info if navigation happened
+                if (page.url or "") != (url_before or ""):
+                    out = dict(out)
+                    out["urlBefore"] = url_before
+                    out["urlAfter"] = page.url
+                    out["navigated"] = True
+                return out
+            return {
+                "ok": True,
+                "urlBefore": url_before,
+                "urlAfter": page.url,
+                "navigated": (page.url != url_before),
+            }
+        except Exception as e:
+            msg = str(e)
+            if "Execution context was destroyed" in msg or "Cannot find context" in msg:
+                # Navigation likely started; wait for it to finish, then continue without re-clicking.
+                try:
+                    await page.wait_for_load_state(
+                        "domcontentloaded",
+                        timeout=int(options.get("navTimeoutMs", 45_000)),
+                    )
+                except Exception:
+                    pass
+                await page.wait_for_timeout(350)
+                # Ensure extractor is present in the new document
+                try:
+                    await self._ensure_extractor(page)
+                except Exception:
+                    pass
+                return {
+                    "ok": True,
+                    "stoppedReason": "navigation_context_destroyed",
+                    "urlBefore": url_before,
+                    "urlAfter": page.url,
+                    "navigated": True,
+                }
+            raise
 
     def _load_site_overrides_json_script(self) -> str:
         """Load site overrides JSON written by profile_sink and expose it to the page context."""
@@ -326,7 +426,9 @@ class PlaywrightExtractor:
                 if not (p.exists() and p.is_file()):
                     continue
                 data = json.loads(p.read_text(encoding="utf-8"))
-                if isinstance(data, dict) and isinstance(data.get("siteOverrides"), dict):
+                if isinstance(data, dict) and isinstance(
+                    data.get("siteOverrides"), dict
+                ):
                     overrides = data["siteOverrides"]
                 elif isinstance(data, dict):
                     # Some files may already be the overrides dict
@@ -338,6 +440,7 @@ class PlaywrightExtractor:
             except Exception:
                 continue
         return "window.__imotiRunnerSiteOverrides = {};"
+
     def _host_of(self, url: str) -> str:
         try:
             return (urlsplit(url).hostname or "").lower()
@@ -364,8 +467,10 @@ class PlaywrightExtractor:
         parts = urlsplit(url)
         path = parts.path or ""
         if path.startswith("/choose/"):
-            path = path[len("/choose"):]  # keep leading slash
-        return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
+            path = path[len("/choose") :]  # keep leading slash
+        return urlunsplit(
+            (parts.scheme, parts.netloc, path, parts.query, parts.fragment)
+        )
 
     def _manual_page_url(self, base_url: str, page_num: int) -> Optional[str]:
         """Build deterministic page URLs for known sites to avoid unstable Next links."""
@@ -391,7 +496,9 @@ class PlaywrightExtractor:
             # keep trailing slash to avoid weird canonicalizations
             new_path = f"{path}/p-{page_num}/"
 
-        return urlunsplit((parts.scheme, parts.netloc, new_path, parts.query, parts.fragment))
+        return urlunsplit(
+            (parts.scheme, parts.netloc, new_path, parts.query, parts.fragment)
+        )
 
     def _imotiinfo_page_url(self, base_url: str, page_num: int) -> str:
         """imoti.info commonly uses /page-N at the end of the path (avoid /choose/)."""
@@ -407,15 +514,19 @@ class PlaywrightExtractor:
         else:
             new_path = f"{path}/page-{page_num}"
 
-        return urlunsplit((parts.scheme, parts.netloc, new_path, parts.query, parts.fragment))
+        return urlunsplit(
+            (parts.scheme, parts.netloc, new_path, parts.query, parts.fragment)
+        )
+
     def _propertybg_page_url(self, base_url: str, page_num: int) -> str:
         """property.bg search paging uses `page=N` query param."""
         parts = urlsplit(base_url)
         q = dict(parse_qsl(parts.query, keep_blank_values=True))
         q["page"] = str(max(1, int(page_num)))
         new_query = urlencode(q, doseq=True)
-        return urlunsplit((parts.scheme, parts.netloc, parts.path, new_query, parts.fragment))
-
+        return urlunsplit(
+            (parts.scheme, parts.netloc, parts.path, new_query, parts.fragment)
+        )
 
     async def _has_next_control_imotbg(self, page: Page) -> bool:
         """Best-effort check: if there is clearly no 'next' control, don't attempt p-2."""
@@ -441,7 +552,9 @@ class PlaywrightExtractor:
         except Exception:
             return True  # if we can't evaluate, don't block pagination
 
-    async def _ensure_imotiinfo_not_choose(self, page: Page, wait_timeout_ms: int) -> bool:
+    async def _ensure_imotiinfo_not_choose(
+        self, page: Page, wait_timeout_ms: int
+    ) -> bool:
         """If we land on /choose/, try to get to the real listings page."""
         if not self._is_imotiinfo(page.url or ""):
             return True
@@ -453,7 +566,9 @@ class PlaywrightExtractor:
         try:
             fixed = self._strip_choose_prefix(page.url)
             if fixed != page.url:
-                await page.goto(fixed, wait_until="domcontentloaded", timeout=wait_timeout_ms)
+                await page.goto(
+                    fixed, wait_until="domcontentloaded", timeout=wait_timeout_ms
+                )
         except Exception:
             pass
 
@@ -489,13 +604,19 @@ class PlaywrightExtractor:
             )
             if clicked:
                 try:
-                    await page.wait_for_load_state("domcontentloaded", timeout=wait_timeout_ms)
+                    await page.wait_for_load_state(
+                        "domcontentloaded", timeout=wait_timeout_ms
+                    )
                 except Exception:
                     pass
                 if "/choose/" in (page.url or ""):
                     fixed = self._strip_choose_prefix(page.url)
                     if fixed != page.url:
-                        await page.goto(fixed, wait_until="domcontentloaded", timeout=wait_timeout_ms)
+                        await page.goto(
+                            fixed,
+                            wait_until="domcontentloaded",
+                            timeout=wait_timeout_ms,
+                        )
         except Exception:
             pass
 
@@ -504,7 +625,9 @@ class PlaywrightExtractor:
 
         # 3) Best-effort validation
         try:
-            await page.wait_for_selector("a[href*='/obiava']", timeout=min(15000, wait_timeout_ms))
+            await page.wait_for_selector(
+                "a[href*='/obiava']", timeout=min(15000, wait_timeout_ms)
+            )
         except Exception:
             pass
 
@@ -525,7 +648,9 @@ class PlaywrightExtractor:
                         "hideLuxSelection is not defined",
                         "Unexpected string",
                     )
-                    if any(s in (msg or "") for s in noisy) or any(s in (stack or "") for s in noisy):
+                    if any(s in (msg or "") for s in noisy) or any(
+                        s in (stack or "") for s in noisy
+                    ):
                         return
                 except Exception:
                     pass
@@ -546,9 +671,13 @@ class PlaywrightExtractor:
                     if msg.type in ("error",):
                         # Suppress known noisy console errors that don't affect list scraping
                         try:
-                            t = (msg.text or "")
+                            t = msg.text or ""
                             loc0 = msg.location or {}
-                            lu = (loc0.get("url") or "") if isinstance(loc0, dict) else ""
+                            lu = (
+                                (loc0.get("url") or "")
+                                if isinstance(loc0, dict)
+                                else ""
+                            )
 
                             noise_substrings = (
                                 "Permissions policy violation: Geolocation",
@@ -572,7 +701,9 @@ class PlaywrightExtractor:
                                 "challenges.cloudflare.com/",
                             )
 
-                            if any(s in t for s in noise_substrings) or any(s in lu for s in noise_url_substrings):
+                            if any(s in t for s in noise_substrings) or any(
+                                s in lu for s in noise_url_substrings
+                            ):
                                 return
                         except Exception:
                             pass
@@ -587,13 +718,19 @@ class PlaywrightExtractor:
 
         page.on("console", _console_handler)
 
-    def _page_signature(self, extracted_payload: Dict[str, Any], max_urls: int = 200) -> str:
+    def _page_signature(
+        self, extracted_payload: Dict[str, Any], max_urls: int = 200
+    ) -> str:
         """Signature for loop detection.
 
         Uses a *sorted* set of many item URLs (not just the first few) to avoid false loop detection
         when a site pins/promotes the same top listings on every page.
         """
-        items = extracted_payload.get("items") if isinstance(extracted_payload, dict) else None
+        items = (
+            extracted_payload.get("items")
+            if isinstance(extracted_payload, dict)
+            else None
+        )
         if not isinstance(items, list) or not items:
             return "no-items"
 
@@ -672,7 +809,9 @@ class PlaywrightExtractor:
         posted_signatures: Optional[set] = None,
         seen_item_keys: Optional[set] = None,
     ) -> Tuple[int, int, Optional[int]]:
-        posted_signatures = posted_signatures if posted_signatures is not None else set()
+        posted_signatures = (
+            posted_signatures if posted_signatures is not None else set()
+        )
         seen_item_keys = seen_item_keys if seen_item_keys is not None else set()
 
         ctx = await self._new_context(browser, target.url)
@@ -684,7 +823,9 @@ class PlaywrightExtractor:
         last_id: Optional[int] = None
 
         try:
-            await page.goto(target.url, wait_until=target.wait_until, timeout=target.timeout_ms)
+            await page.goto(
+                target.url, wait_until=target.wait_until, timeout=target.timeout_ms
+            )
             await page.wait_for_timeout(700)
             await self._ensure_extractor(page)
 
@@ -701,6 +842,23 @@ class PlaywrightExtractor:
 
             if target.mode == "extract_once":
                 payload = await self._extract(page)
+                try:
+                    items_list = (
+                        payload.get("items") if isinstance(payload, dict) else None
+                    )
+                    item_count = len(items_list) if isinstance(items_list, list) else 0
+                    sample_links = []
+                    if isinstance(items_list, list):
+                        for it in items_list:
+                            if isinstance(it, dict) and it.get("url"):
+                                sample_links.append(it.get("url"))
+                            if len(sample_links) >= 5:
+                                break
+                    print(
+                        f"[{target.name}] AFTER_LOAD_MORE items={item_count} sample_links={sample_links}"
+                    )
+                except Exception:
+                    pass
                 sig = self._page_signature(payload)
                 if sig not in posted_signatures:
                     resp = await api.post_extraction(payload)
@@ -708,12 +866,32 @@ class PlaywrightExtractor:
                     posts_done += 1
                     posted_signatures.add(sig)
                 pages_visited = 1
-                print(f"[{target.name}] page=1 items={len(payload.get('items') or [])} posted={posts_done}")
+                print(
+                    f"[{target.name}] page=1 items={len(payload.get('items') or [])} posted={posts_done}"
+                )
                 return pages_visited, posts_done, last_id
 
             if target.mode == "load_more_then_extract":
-                await self._load_more(page, target.load_more or {})
+                lm_stats = await self._load_more(page, target.load_more or {})
+                print(f"[{target.name}] LOAD_MORE stats={lm_stats}")
                 payload = await self._extract(page)
+                try:
+                    items_list = (
+                        payload.get("items") if isinstance(payload, dict) else None
+                    )
+                    item_count = len(items_list) if isinstance(items_list, list) else 0
+                    sample_links = []
+                    if isinstance(items_list, list):
+                        for it in items_list:
+                            if isinstance(it, dict) and it.get("url"):
+                                sample_links.append(it.get("url"))
+                            if len(sample_links) >= 5:
+                                break
+                    print(
+                        f"[{target.name}] AFTER_LOAD_MORE items={item_count} sample_links={sample_links}"
+                    )
+                except Exception:
+                    pass
                 sig = self._page_signature(payload)
                 if sig not in posted_signatures:
                     resp = await api.post_extraction(payload)
@@ -721,11 +899,204 @@ class PlaywrightExtractor:
                     posts_done += 1
                     posted_signatures.add(sig)
                 pages_visited = 1
-                print(f"[{target.name}] page=1(load_more) items={len(payload.get('items') or [])} posted={posts_done}")
+                print(
+                    f"[{target.name}] page=1(load_more) items={len(payload.get('items') or [])} posted={posts_done}"
+                )
                 return pages_visited, posts_done, last_id
 
+            if target.mode == "load_more_pagination":
+                max_pages = max(1, min(20000, int(target.max_pages)))
+                post_strategy = (target.post_strategy or "per_page").lower().strip()
+                if post_strategy not in ("per_page", "per_target"):
+                    post_strategy = "per_page"
+
+                batch_every = int(target.post_batch_pages or 50)
+                batch_every = max(0, min(5000, batch_every))
+
+                base_payload: Optional[Dict[str, Any]] = None
+                batch_items: Dict[str, Dict[str, Any]] = {}
+                batch_page_urls: List[str] = []
+                batch_pages = 0
+                batch_index = 0
+
+                async def flush_batch(reason: str) -> None:
+                    nonlocal posts_done, last_id, batch_items, batch_page_urls, batch_pages, batch_index, base_payload
+
+                    if post_strategy != "per_target":
+                        return
+                    if not batch_items:
+                        batch_page_urls = []
+                        batch_pages = 0
+                        return
+
+                    payload_to_post = json.loads(
+                        json.dumps(base_payload or {}, ensure_ascii=False)
+                    )
+                    payload_to_post["sourceUrl"] = target.url
+                    payload_to_post["extractedAt"] = utc_now_iso()
+                    payload_to_post["items"] = list(batch_items.values())
+
+                    meta = dict(payload_to_post.get("meta") or {})
+                    meta.update(
+                        {
+                            "targetName": target.name,
+                            "mode": "load_more_pagination",
+                            "postStrategy": "per_target_batched",
+                            "batchIndex": batch_index,
+                            "batchPages": batch_pages,
+                            "batchPageUrls": list(batch_page_urls),
+                            "pagesVisitedSoFar": pages_visited,
+                            "uniqueItemsTotal": len(seen_item_keys),
+                            "uniqueItemsInBatch": len(batch_items),
+                            "flushReason": reason,
+                        }
+                    )
+                    payload_to_post["meta"] = meta
+
+                    resp = await api.post_extraction(payload_to_post)
+                    last_id = resp.get("id") if isinstance(resp, dict) else last_id
+                    posts_done += 1
+                    batch_index += 1
+                    batch_items = {}
+                    batch_page_urls = []
+                    batch_pages = 0
+
+                no_new_streak = 0
+                load_more_opts = target.load_more or {}
+
+                for page_no in range(1, max_pages + 1):
+                    payload = await self._extract(page)
+                    try:
+                        items_list = (
+                            payload.get("items") if isinstance(payload, dict) else None
+                        )
+                        item_count = (
+                            len(items_list) if isinstance(items_list, list) else 0
+                        )
+                        sample_links = []
+                        if isinstance(items_list, list):
+                            for it in items_list:
+                                if isinstance(it, dict) and it.get("url"):
+                                    sample_links.append(it.get("url"))
+                                if len(sample_links) >= 5:
+                                    break
+                        print(
+                            f"[{target.name}] AFTER_LOAD_MORE items={item_count} sample_links={sample_links}"
+                        )
+                    except Exception:
+                        pass
+                    if base_payload is None:
+                        # Keep a stable envelope for batching; don't carry massive 'items' across posts.
+                        base_payload = json.loads(
+                            json.dumps(payload, ensure_ascii=False)
+                        )
+                        base_payload["items"] = []
+
+                    items = payload.get("items") or []
+                    new_items: List[Dict[str, Any]] = []
+                    new_unique = 0
+                    for it in items:
+                        try:
+                            key = self._item_key(it)
+                        except Exception:
+                            continue
+                        if key in seen_item_keys:
+                            continue
+                        seen_item_keys.add(key)
+                        new_unique += 1
+                        new_items.append(it)
+                        if post_strategy == "per_target":
+                            batch_items[key] = it
+
+                    pages_visited = page_no
+                    print(
+                        f"[{target.name}] page={page_no}/{max_pages} items={len(items)} new_unique={new_unique} "
+                        f"unique_total={len(seen_item_keys)} url={page.url}"
+                    )
+
+                    # Per-page posting (optional): post only newly discovered items
+                    if post_strategy == "per_page" and new_items:
+                        payload_to_post = json.loads(
+                            json.dumps(payload, ensure_ascii=False)
+                        )
+                        payload_to_post["items"] = new_items
+                        meta = dict(payload_to_post.get("meta") or {})
+                        meta.update(
+                            {
+                                "targetName": target.name,
+                                "mode": "load_more_pagination",
+                                "postStrategy": "per_page_new_items",
+                                "pagesVisitedSoFar": pages_visited,
+                                "uniqueItemsTotal": len(seen_item_keys),
+                                "newUniqueThisPage": new_unique,
+                            }
+                        )
+                        payload_to_post["meta"] = meta
+                        resp = await api.post_extraction(payload_to_post)
+                        last_id = resp.get("id") if isinstance(resp, dict) else last_id
+                        posts_done += 1
+
+                    # batch book-keeping
+                    if post_strategy == "per_target":
+                        batch_pages += 1
+                        batch_page_urls.append(page.url)
+
+                        if batch_every > 0 and (page_no % batch_every == 0):
+                            await flush_batch(reason=f"reached_{batch_every}_pages")
+
+                    if new_unique == 0:
+                        no_new_streak += 1
+                    else:
+                        no_new_streak = 0
+
+                    # Stop when we stop discovering new listings (primary stop condition).
+                    if page_no > 1 and no_new_streak >= 1:
+                        await flush_batch(reason="no_new_unique")
+                        print(
+                            f"[{target.name}] STOP no_new_unique page={page_no} url={page.url}"
+                        )
+                        break
+
+                    if page_no >= max_pages:
+                        break
+
+                    # Trigger one 'load more' step. ues.bg may navigate; _load_more() is navigation-safe.
+                    url_before = page.url
+                    status = await self._load_more(page, load_more_opts)
+
+                    # If navigation happened, wait for the new document before the next extraction.
+                    if (page.url or "") != (url_before or "") or bool(
+                        status.get("navigated")
+                    ):
+                        try:
+                            await page.wait_for_load_state(
+                                target.wait_until, timeout=target.timeout_ms
+                            )
+                        except Exception:
+                            try:
+                                await page.wait_for_load_state(
+                                    "domcontentloaded", timeout=target.timeout_ms
+                                )
+                            except Exception:
+                                pass
+                        await page.wait_for_timeout(350)
+                        await self._ensure_extractor(page)
+
+                    # Honor per-step waits (helps sites that hydrate cards after DOM load).
+                    wait_after = int(load_more_opts.get("waitAfterClickMs", 0) or 0)
+                    if wait_after > 0:
+                        await page.wait_for_timeout(min(wait_after, 20_000))
+
+                # Final flush for per-target batching
+                await flush_batch(reason="end")
+                print(
+                    f"[{target.name}] DONE(load_more_pagination) pages_visited={pages_visited} posts_done={posts_done} last_extraction_id={last_id}"
+                )
+                return pages_visited, posts_done, last_id
             if target.mode != "pagination":
-                raise ValueError(f"Unknown mode '{target.mode}' for target '{target.name}'")
+                raise ValueError(
+                    f"Unknown mode '{target.mode}' for target '{target.name}'"
+                )
 
             max_pages = max(1, min(20000, int(target.max_pages)))
             delay_ms = max(0, min(20_000, int(target.delay_ms)))
@@ -739,7 +1110,6 @@ class PlaywrightExtractor:
 
             seen_this_attempt: set = set()
             repeat_sig_hits = 0  # address.bg sometimes repeats pages under throttling; allow a few repeats
-
 
             base_payload: Optional[Dict[str, Any]] = None
             batch_items: Dict[str, Dict[str, Any]] = {}
@@ -758,7 +1128,9 @@ class PlaywrightExtractor:
                     batch_pages = 0
                     return
 
-                payload_to_post = json.loads(json.dumps(base_payload, ensure_ascii=False))
+                payload_to_post = json.loads(
+                    json.dumps(base_payload, ensure_ascii=False)
+                )
                 payload_to_post["sourceUrl"] = target.url
                 payload_to_post["extractedAt"] = utc_now_iso()
                 payload_to_post["items"] = list(batch_items.values())
@@ -795,13 +1167,36 @@ class PlaywrightExtractor:
 
             for _ in range(max_pages):
                 # avoid extracting on imoti.info /choose/ pages
-                if self._is_imotiinfo(page.url or "") and "/choose/" in (page.url or ""):
-                    ok = await self._ensure_imotiinfo_not_choose(page, target.timeout_ms)
+                if self._is_imotiinfo(page.url or "") and "/choose/" in (
+                    page.url or ""
+                ):
+                    ok = await self._ensure_imotiinfo_not_choose(
+                        page, target.timeout_ms
+                    )
                     if not ok:
-                        print(f"[{target.name}] STOP imotiinfo_choose_gate page={pages_visited+1} url={page.url}")
+                        print(
+                            f"[{target.name}] STOP imotiinfo_choose_gate page={pages_visited+1} url={page.url}"
+                        )
                         break
 
                 payload = await self._extract(page)
+                try:
+                    items_list = (
+                        payload.get("items") if isinstance(payload, dict) else None
+                    )
+                    item_count = len(items_list) if isinstance(items_list, list) else 0
+                    sample_links = []
+                    if isinstance(items_list, list):
+                        for it in items_list:
+                            if isinstance(it, dict) and it.get("url"):
+                                sample_links.append(it.get("url"))
+                            if len(sample_links) >= 5:
+                                break
+                    print(
+                        f"[{target.name}] AFTER_LOAD_MORE items={item_count} sample_links={sample_links}"
+                    )
+                except Exception:
+                    pass
                 pages_visited += 1
 
                 items_list = payload.get("items") if isinstance(payload, dict) else None
@@ -812,15 +1207,22 @@ class PlaywrightExtractor:
                 if sig in seen_this_attempt:
                     if self._is_addressbg(target.url) and repeat_sig_hits < 5:
                         repeat_sig_hits += 1
-                        print(f"[{target.name}] WARN repeated_content allow_next hit={repeat_sig_hits} page={pages_visited} url={page.url}")
+                        print(
+                            f"[{target.name}] WARN repeated_content allow_next hit={repeat_sig_hits} page={pages_visited} url={page.url}"
+                        )
                     else:
-                        reason = "no_next(same_content)" if pages_visited > 1 else "loop_detected"
-                        print(f"[{target.name}] STOP {reason} page={pages_visited} url={page.url}")
+                        reason = (
+                            "no_next(same_content)"
+                            if pages_visited > 1
+                            else "loop_detected"
+                        )
+                        print(
+                            f"[{target.name}] STOP {reason} page={pages_visited} url={page.url}"
+                        )
                         break
                 else:
                     seen_this_attempt.add(sig)
                     repeat_sig_hits = 0
-
 
                 new_items_this_page = 0
 
@@ -861,7 +1263,11 @@ class PlaywrightExtractor:
                         f"posted_pages={posts_done} last_id={last_id} url={page.url}"
                     )
 
-                if post_strategy == "per_target" and batch_every > 0 and batch_pages >= batch_every:
+                if (
+                    post_strategy == "per_target"
+                    and batch_every > 0
+                    and batch_pages >= batch_every
+                ):
                     await flush_batch(reason=f"reached_{batch_every}_pages")
 
                 if pages_visited >= max_pages:
@@ -874,28 +1280,46 @@ class PlaywrightExtractor:
                     if self._is_imotbg(target.url) and pages_visited == 1:
                         has_next = await self._has_next_control_imotbg(page)
                         if not has_next:
-                            print(f"[{target.name}] STOP no_next(no_control) page={pages_visited} url={page.url}")
+                            print(
+                                f"[{target.name}] STOP no_next(no_control) page={pages_visited} url={page.url}"
+                            )
                             break
 
                     try:
-                        await page.goto(manual_next, wait_until=target.wait_until, timeout=target.timeout_ms)
+                        await page.goto(
+                            manual_next,
+                            wait_until=target.wait_until,
+                            timeout=target.timeout_ms,
+                        )
                     except Exception as e:
-                        print(f"[{target.name}] STOP nav_failed page={pages_visited} next={manual_next} err={e}")
+                        print(
+                            f"[{target.name}] STOP nav_failed page={pages_visited} next={manual_next} err={e}"
+                        )
                         break
 
-                    if self._is_imotiinfo(page.url or "") and "/choose/" in (page.url or ""):
-                        ok = await self._ensure_imotiinfo_not_choose(page, target.timeout_ms)
+                    if self._is_imotiinfo(page.url or "") and "/choose/" in (
+                        page.url or ""
+                    ):
+                        ok = await self._ensure_imotiinfo_not_choose(
+                            page, target.timeout_ms
+                        )
                         if not ok:
-                            print(f"[{target.name}] STOP imotiinfo_choose_gate page={pages_visited} url={page.url}")
+                            print(
+                                f"[{target.name}] STOP imotiinfo_choose_gate page={pages_visited} url={page.url}"
+                            )
                             break
                 else:
                     did_nav = await self._navigate_next(page)
                     if not did_nav:
-                        print(f"[{target.name}] STOP no_next page={pages_visited} url={page.url}")
+                        print(
+                            f"[{target.name}] STOP no_next page={pages_visited} url={page.url}"
+                        )
                         break
 
                 try:
-                    await page.wait_for_load_state("domcontentloaded", timeout=target.timeout_ms)
+                    await page.wait_for_load_state(
+                        "domcontentloaded", timeout=target.timeout_ms
+                    )
                 except Exception:
                     pass
 
@@ -915,7 +1339,9 @@ class PlaywrightExtractor:
                     await flush_batch(reason="final")
                 else:
                     if base_payload is not None:
-                        merged = json.loads(json.dumps(base_payload, ensure_ascii=False))
+                        merged = json.loads(
+                            json.dumps(base_payload, ensure_ascii=False)
+                        )
                         merged["sourceUrl"] = target.url
                         merged["extractedAt"] = utc_now_iso()
                         merged["items"] = list(batch_items.values())
@@ -955,7 +1381,9 @@ class ScrapeRunner:
         self.headless = headless
 
         self.loader = TargetsLoader(targets_file)
-        self.extractor = PlaywrightExtractor(content_script_path=content_script_path, headless=headless)
+        self.extractor = PlaywrightExtractor(
+            content_script_path=content_script_path, headless=headless
+        )
         self._posted_sigs_by_target: Dict[str, set] = {}
         self._seen_item_keys_by_target: Dict[str, set] = {}
 
@@ -988,21 +1416,29 @@ class ScrapeRunner:
                 for t in targets:
                     print(f"=== {t.name} ===")
                     print(f"URL: {t.url}")
-                    print(f"Mode: {t.mode} | post_strategy: {t.post_strategy} | post_batch_pages: {t.post_batch_pages}")
+                    print(
+                        f"Mode: {t.mode} | post_strategy: {t.post_strategy} | post_batch_pages: {t.post_batch_pages}"
+                    )
 
                     attempts = 0
                     while attempts < 2:
                         attempts += 1
                         try:
-                            posted = self._posted_sigs_by_target.setdefault(t.name, set())
-                            seen_keys = self._seen_item_keys_by_target.setdefault(t.name, set())
+                            posted = self._posted_sigs_by_target.setdefault(
+                                t.name, set()
+                            )
+                            seen_keys = self._seen_item_keys_by_target.setdefault(
+                                t.name, set()
+                            )
 
-                            pages_visited, posts_done, last_id = await self.extractor.scrape_target(
-                                api,
-                                t,
-                                browser,
-                                posted_signatures=posted,
-                                seen_item_keys=seen_keys,
+                            pages_visited, posts_done, last_id = (
+                                await self.extractor.scrape_target(
+                                    api,
+                                    t,
+                                    browser,
+                                    posted_signatures=posted,
+                                    seen_item_keys=seen_keys,
+                                )
                             )
                             ok += 1
                             print(
@@ -1014,7 +1450,9 @@ class ScrapeRunner:
                         except Exception as e:
                             msg = str(e)
                             if "Target page, context or browser has been closed" in msg:
-                                print("Browser closed/crashed. Relaunching and retrying once...")
+                                print(
+                                    "Browser closed/crashed. Relaunching and retrying once..."
+                                )
                                 try:
                                     try:
                                         await browser.close()
@@ -1049,7 +1487,11 @@ def main():
 
     parser = argparse.ArgumentParser(description="Run index/list extraction targets.")
     parser.add_argument("--only", help="Run only a single target name", default=None)
-    parser.add_argument("--headful", action="store_true", help="Run with a visible browser (headless=false)")
+    parser.add_argument(
+        "--headful",
+        action="store_true",
+        help="Run with a visible browser (headless=false)",
+    )
     args = parser.parse_args()
 
     runner = ScrapeRunner(

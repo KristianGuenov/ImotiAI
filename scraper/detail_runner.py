@@ -33,6 +33,31 @@ BLOCKED_URL_PARTS = (
 )
 
 
+async def _auto_scroll(
+    page: Page, max_steps: int = 12, step_delay_ms: int = 350
+) -> None:
+    """Best-effort auto-scroll to trigger lazy-loaded content (e.g., image galleries)."""
+    try:
+        await page.evaluate(
+            """async (maxSteps, delayMs) => {
+                const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+                let lastH = -1;
+                for (let i = 0; i < maxSteps; i++) {
+                    window.scrollTo(0, document.body.scrollHeight);
+                    await sleep(delayMs);
+                    const h = document.body.scrollHeight;
+                    if (h === lastH) break;
+                    lastH = h;
+                }
+                window.scrollTo(0, 0);
+            }""",
+            max_steps,
+            step_delay_ms,
+        )
+    except Exception:
+        return
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -106,16 +131,28 @@ def load_rules(path: str) -> Tuple[DomainRule, List[DomainRule]]:
     def _mk_rule(domain: str, dct: Dict[str, Any]) -> DomainRule:
         inc_any = list(dct.get("include_any") or [])
         exc_any = list(dct.get("exclude_any") or [])
-        inc_rx = [re.compile(p, re.I) for p in (dct.get("include_regex") or []) if isinstance(p, str) and p]
-        exc_rx = [re.compile(p, re.I) for p in (dct.get("exclude_regex") or []) if isinstance(p, str) and p]
+        inc_rx = [
+            re.compile(p, re.I)
+            for p in (dct.get("include_regex") or [])
+            if isinstance(p, str) and p
+        ]
+        exc_rx = [
+            re.compile(p, re.I)
+            for p in (dct.get("exclude_regex") or [])
+            if isinstance(p, str) and p
+        ]
 
         return DomainRule(
             domain=domain,
             concurrency=max(1, min(10, _safe_int(dct.get("concurrency"), 2))),
             min_desc_len=max(0, _safe_int(dct.get("min_desc_len"), 60)),
             wait_until=str(dct.get("wait_until") or "domcontentloaded"),
-            timeout_ms=max(5_000, min(180_000, _safe_int(dct.get("timeout_ms"), 45_000))),
-            extractor_script=str(dct.get("extractor_script") or "/app/scraper/detail_extractor.js"),
+            timeout_ms=max(
+                5_000, min(180_000, _safe_int(dct.get("timeout_ms"), 45_000))
+            ),
+            extractor_script=str(
+                dct.get("extractor_script") or "/app/scraper/detail_extractor.js"
+            ),
             include_any=[str(x) for x in inc_any if isinstance(x, (str, int, float))],
             exclude_any=[str(x) for x in exc_any if isinstance(x, (str, int, float))],
             include_regex=inc_rx,
@@ -138,7 +175,9 @@ def load_rules(path: str) -> Tuple[DomainRule, List[DomainRule]]:
     return default_rule, rules
 
 
-def pick_rule(host: str, default_rule: DomainRule, rules: List[DomainRule]) -> DomainRule:
+def pick_rule(
+    host: str, default_rule: DomainRule, rules: List[DomainRule]
+) -> DomainRule:
     host = (host or "").lower()
     for r in rules:
         if r.matches_host(host):
@@ -203,7 +242,9 @@ class ApiClient:
             raise RuntimeError(f"API error {r.status_code}: {(r.text or '')[:800]}")
         return r.json()
 
-    async def post_extractions_batch(self, payloads: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    async def post_extractions_batch(
+        self, payloads: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """Optional speed path: batch endpoint (falls back to per-item if not available)."""
         if self._client is None:
             raise RuntimeError("ApiClient not initialized")
@@ -265,16 +306,28 @@ class DetailExtractor:
             timeout=10_000,
         )
 
-    async def extract_description(self, page: Page, script_path: str) -> Tuple[Optional[str], Optional[str]]:
+    async def extract_description(
+        self, page: Page, script_path: str
+    ) -> Tuple[Optional[str], Optional[str], Optional[str], List[str]]:
         await self.ensure(page, script_path)
         out = await page.evaluate("() => window.__listingDetailExtractor.extract()")
         if not isinstance(out, dict) or not out.get("ok"):
             raise RuntimeError("Detail extraction failed")
         desc = out.get("description")
         title = out.get("title")
+        image = out.get("image")
+        images = out.get("images")
+
         desc = desc.strip() if isinstance(desc, str) else None
         title = title.strip() if isinstance(title, str) else None
-        return title, desc
+        image = image.strip() if isinstance(image, str) else None
+        if isinstance(images, list):
+            images = [
+                str(x).strip() for x in images if isinstance(x, str) and str(x).strip()
+            ]
+        else:
+            images = []
+        return title, desc, image, images
 
 
 class ContextPool:
@@ -338,7 +391,13 @@ class ContextPool:
         self._contexts.clear()
 
 
-def make_detail_payload(listing_url: str, title: Optional[str], description: Optional[str]) -> Dict[str, Any]:
+def make_detail_payload(
+    listing_url: str,
+    title: Optional[str],
+    description: Optional[str],
+    image: Optional[str],
+    images: List[str],
+) -> Dict[str, Any]:
     return {
         "dataVersion": 1,
         "sourceUrl": listing_url,
@@ -347,16 +406,17 @@ def make_detail_payload(listing_url: str, title: Optional[str], description: Opt
         "meta": {
             "mode": "detail",
             "domain": _domain(listing_url),
-            "fields": ["description"],
+            "fields": ["description", "rawText", "image", "images"],
         },
         "items": [
             {
                 "title": title,
                 "url": listing_url,
-                "image": None,
-                "images": [],
-                "texts": [],
+                "description": description or "",
                 "rawText": description or "",
+                "image": image,
+                "images": images or [],
+                "texts": [],
             }
         ],
     }
@@ -373,13 +433,26 @@ async def scrape_one(
     try:
         await page.goto(url, wait_until=rule.wait_until, timeout=rule.timeout_ms)
         await page.wait_for_timeout(350)
+        await _auto_scroll(page)
+        await page.wait_for_timeout(250)
 
-        title, desc = await extractor.extract_description(page, rule.extractor_script)
+        title, desc, image, images = await extractor.extract_description(
+            page, rule.extractor_script
+        )
 
+        print(
+            f"🖼️ images extracted: {len(images)} | cover={image} | sample={images[:5]}",
+            flush=True,
+        )
+
+        # --- ADDED: per-URL skip reasons (so "scraped=5" is explainable) ---
         if not desc:
+            print(f"⏭️ skip (no desc): {url}")
             return None
         if rule.min_desc_len and len(desc) < rule.min_desc_len:
+            print(f"⏭️ skip (too short {len(desc)}<{rule.min_desc_len}): {url}")
             return None
+        # ---------------------------------------------------------------
 
         return make_detail_payload(url, title, desc)
     finally:
@@ -389,7 +462,9 @@ async def scrape_one(
             pass
 
 
-async def post_payloads(api: ApiClient, payloads: List[Dict[str, Any]], batch_size: int) -> List[int]:
+async def post_payloads(
+    api: ApiClient, payloads: List[Dict[str, Any]], batch_size: int
+) -> List[int]:
     ids: List[int] = []
     if not payloads:
         return ids
@@ -399,7 +474,11 @@ async def post_payloads(api: ApiClient, payloads: List[Dict[str, Any]], batch_si
     for i in range(0, len(payloads), batch_size):
         chunk = payloads[i : i + batch_size]
         try:
-            results = await api.post_extractions_batch(chunk) if batch_size > 1 else [await api.post_extraction(chunk[0])]
+            results = (
+                await api.post_extractions_batch(chunk)
+                if batch_size > 1
+                else [await api.post_extraction(chunk[0])]
+            )
         except Exception as e:
             # Fallback: try individual posts so one bad payload doesn't nuke the whole batch.
             print(f"⚠️ batch post failed ({len(chunk)} items): {e} -> trying individual")
@@ -410,10 +489,17 @@ async def post_payloads(api: ApiClient, payloads: List[Dict[str, Any]], batch_si
                 except Exception as e2:
                     print(f"❌ post failed: {p.get('sourceUrl')} -> {e2}")
 
+        # --- ADDED: per-post confirmation (true end-to-end signal) ---
         for r in results:
             rid = r.get("id") if isinstance(r, dict) else None
             if isinstance(rid, int):
                 ids.append(rid)
+                src = r.get("sourceUrl") if isinstance(r, dict) else None
+                if isinstance(src, str) and src:
+                    print(f"📌 posted: id={rid} url={src}")
+                else:
+                    print(f"📌 posted: id={rid}")
+        # ------------------------------------------------------------
 
     return ids
 
@@ -434,7 +520,9 @@ async def run_once(
     default_rule, domain_rules = load_rules(rules_file)
 
     async with ApiClient(api_base, api_key) as api:
-        urls = await api.get_detail_queue(domain=queue_domain, url_contains=queue_url_contains, limit=queue_limit)
+        urls = await api.get_detail_queue(
+            domain=queue_domain, url_contains=queue_url_contains, limit=queue_limit
+        )
 
         # dedupe + cap
         seen: Set[str] = set()
@@ -480,12 +568,26 @@ async def run_once(
                 async with global_sem:
                     async with domain_sems[rule.domain]:
                         try:
-                            return await scrape_one(pool, extractor, rule, u)
+                            payload = await scrape_one(pool, extractor, rule, u)
+
+                            # --- ADDED: per-URL success log (after scrape) ---
+                            if isinstance(payload, dict):
+                                items = payload.get("items") or []
+                                raw = ""
+                                if items and isinstance(items[0], dict):
+                                    raw = items[0].get("rawText") or ""
+                                raw_len = len(raw) if isinstance(raw, str) else 0
+                                print(f"✅ scraped: {u} (rawText_len={raw_len})")
+                            # ------------------------------------------------
+
+                            return payload
                         except Exception as e:
                             print(f"❌ detail failed: {u} -> {e}")
                             return None
 
-            payloads = await asyncio.gather(*[asyncio.create_task(worker(u, rule)) for (u, rule) in final])
+            payloads = await asyncio.gather(
+                *[asyncio.create_task(worker(u, rule)) for (u, rule) in final]
+            )
             await pool.close()
             await browser.close()
 
@@ -508,12 +610,23 @@ async def main_async(argv: List[str]) -> int:
     parser.add_argument("--api-key", default=os.getenv("API_KEY", "dev-key-change-me"))
 
     # By default we run across ALL domains. You can still filter if needed.
-    parser.add_argument("--queue-domain", default=os.getenv("DETAIL_QUEUE_DOMAIN") or None)
-    parser.add_argument("--queue-url-contains", default=os.getenv("DETAIL_QUEUE_URL_CONTAINS") or None)
-    parser.add_argument("--queue-limit", type=int, default=int(os.getenv("DETAIL_QUEUE_LIMIT", "200")))
-    parser.add_argument("--max-urls", type=int, default=int(os.getenv("DETAIL_MAX_URLS", "200")))
+    parser.add_argument(
+        "--queue-domain", default=os.getenv("DETAIL_QUEUE_DOMAIN") or None
+    )
+    parser.add_argument(
+        "--queue-url-contains", default=os.getenv("DETAIL_QUEUE_URL_CONTAINS") or None
+    )
+    parser.add_argument(
+        "--queue-limit", type=int, default=int(os.getenv("DETAIL_QUEUE_LIMIT", "200"))
+    )
+    parser.add_argument(
+        "--max-urls", type=int, default=int(os.getenv("DETAIL_MAX_URLS", "200"))
+    )
 
-    parser.add_argument("--rules", default=os.getenv("DETAIL_RULES_FILE", "/app/scraper/detail_rules.yml"))
+    parser.add_argument(
+        "--rules",
+        default=os.getenv("DETAIL_RULES_FILE", "/app/scraper/detail_rules.yml"),
+    )
 
     parser.add_argument(
         "--global-concurrency",

@@ -287,6 +287,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return;
     }
 
+    // Convenience alias for "Load more" button picking.
+    if (msg?.type === "START_PICKER_LOAD_MORE") {
+      const tab = await getActiveTab();
+      await ensureContentScript(tab.id);
+      const resp = await sendToTab(tab.id, { type: "START_PICKER", kind: "loadMore" });
+      sendResponse(resp);
+      return;
+    }
+
     if (msg?.type === "STOP_PICKER") {
       const tab = await getActiveTab();
       await ensureContentScript(tab.id);

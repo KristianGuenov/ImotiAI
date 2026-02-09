@@ -117,8 +117,16 @@
         "div.grid-container"
       ],
       "updatedAt": "2026-01-31T20:58:03.656Z"
+    },
+    "ues.bg": {
+      "selectorCards": [
+        "div.news-events-item-inner.new-offer-holder"
+      ],
+      "listingLinkPattern": null,
+      "loadMoreSelector": "button.loadmore.loading.load-more",
+      "updatedAt": "2026-02-02T09:52:28.482Z"
     }
   },
-  "updatedAt": "2026-01-31T20:58:03.660017+00:00",
+  "updatedAt": "2026-02-02T09:52:28.497537+00:00",
   "source": "extension"
 }

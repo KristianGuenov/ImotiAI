@@ -194,12 +194,152 @@
     return longest;
   }
 
+  function toAbsUrl(u) {
+    try {
+      if (!u) return null;
+      const s = String(u).trim();
+      if (!s || s.startsWith("data:")) return null;
+      return new URL(s, location.href).toString();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function pickLargestFromSrcset(srcset) {
+    const s = normalize(srcset);
+    if (!s) return null;
+    const parts = s
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean)
+      .map((p) => {
+        const seg = p.split(/\s+/);
+        const url = seg[0];
+        const d = seg[seg.length - 1] || "";
+        let w = 0;
+        let x = 0;
+        if (d.endsWith("w")) w = parseInt(d.slice(0, -1), 10) || 0;
+        if (d.endsWith("x")) x = parseFloat(d.slice(0, -1)) || 0;
+        return { url, score: w || Math.round((x || 0) * 1000) };
+      })
+      .sort((a, b) => b.score - a.score);
+    return parts.length ? parts[0].url : null;
+  }
+
+  function extractImages(maxCount = 60) {
+    const out = [];
+    const seen = new Set();
+
+    function add(u) {
+      const abs = toAbsUrl(u);
+      if (!abs) return;
+      const low = abs.toLowerCase();
+      if (low.includes("sprite") || low.includes("icon") || low.endsWith(".svg")) return;
+      if (seen.has(abs)) return;
+      seen.add(abs);
+      out.push(abs);
+    }
+
+    // meta images (often the cover)
+    const metaSelectors = [
+      'meta[property="og:image"]',
+      'meta[property="og:image:url"]',
+      'meta[name="twitter:image"]',
+      'meta[property="twitter:image"]',
+    ];
+    for (const sel of metaSelectors) {
+      for (const m of Array.from(document.querySelectorAll(sel))) {
+        add(m.getAttribute("content"));
+        if (out.length >= maxCount) return out.slice(0, maxCount);
+      }
+    }
+
+    // <img> tags
+    for (const img of Array.from(document.querySelectorAll("img"))) {
+      const best = pickLargestFromSrcset(img.getAttribute("srcset"));
+      if (best) add(best);
+      add(img.getAttribute("data-full"));
+      add(img.getAttribute("data-large"));
+      add(img.getAttribute("data-src"));
+      add(img.getAttribute("data-original"));
+      add(img.getAttribute("data-lazy"));
+      add(img.getAttribute("src"));
+      if (out.length >= maxCount) return out.slice(0, maxCount);
+    }
+
+    // picture/source srcset
+    for (const s of Array.from(document.querySelectorAll("picture source[srcset]"))) {
+      add(pickLargestFromSrcset(s.getAttribute("srcset")));
+      if (out.length >= maxCount) return out.slice(0, maxCount);
+    }
+
+    // dataset / data-* attributes
+    const dataAttrs = [
+      "data-full",
+      "data-large",
+      "data-big",
+      "data-zoom",
+      "data-image",
+      "data-img",
+      "data-photo",
+      "data-src",
+      "data-original",
+      "data-lazy",
+      "data-bg",
+      "data-background",
+      "data-background-image",
+    ];
+    for (const a of dataAttrs) {
+      for (const el of Array.from(document.querySelectorAll(`[${a}]`))) {
+        add(el.getAttribute(a));
+        if (out.length >= maxCount) return out.slice(0, maxCount);
+      }
+    }
+
+    // anchor hrefs that point directly to image files
+    const isImgHref = (h) => !!h && /\.(jpe?g|png|webp|gif)(\?|#|$)/i.test(h);
+    for (const a of Array.from(document.querySelectorAll("a[href]"))) {
+      const href = a.getAttribute("href");
+      if (isImgHref(href)) add(href);
+      if (out.length >= maxCount) return out.slice(0, maxCount);
+    }
+
+    // background-image URLs (inline + computed)
+    const urlRe = /url\((['"]?)(.*?)\1\)/g;
+    const candidates = Array.from(document.querySelectorAll("[style]"))
+      .filter((el) => /background/i.test(el.getAttribute("style") || ""))
+      .slice(0, 800);
+
+    for (const el of candidates) {
+      const styleAttr = el.getAttribute("style") || "";
+      let m;
+      while ((m = urlRe.exec(styleAttr)) !== null) {
+        add(m[2]);
+        if (out.length >= maxCount) return out.slice(0, maxCount);
+      }
+
+      try {
+        const bg = window.getComputedStyle(el).backgroundImage || "";
+        let m2;
+        while ((m2 = urlRe.exec(bg)) !== null) {
+          add(m2[2]);
+          if (out.length >= maxCount) return out.slice(0, maxCount);
+        }
+      } catch (_) {}
+    }
+
+    return out.slice(0, maxCount);
+  }
+
+
   window.__listingDetailExtractor = {
     version: 1,
     extract() {
       const description = normalize(extractDescription());
       const title = pickTitle();
-      return { ok: true, url: location.href, title, description };
+      const images = extractImages(60);
+      const image = images.length ? images[0] : null;
+      return { ok: true, url: location.href, title, description, image, images };
     },
   };
 })();

@@ -1,7 +1,44 @@
-- name: UnE_bg_sale
+
+- name: yavlena_com_sale
+  url: https://yavlena.com/bg/sales
+  mode: load_more_then_extract
+  max_pages: 1
+  post_strategy: per_target
+  post_batch_pages: 1
+  load_more:
+    preferPattern: /bg/
+    forceScrollOnly: true
+    scrollSteps: 20000
+    maxActions: 20000
+    idleCycles: 60
+    initialWaitMs: 10000
+    stepDelayMs: 1100
+    waitAfterClickMs: 9000
+    scrollStepFactor: 0.85
+    scrollMinStepPx: 450
+  
+- name: ues_bg_sale
+  url: "https://ues.bg/en/bgr/imoti/prodajbi/sofia/all?_=1770032359712&&page=1060"
+  mode: load_more_then_extract
+  max_pages: 1
+  post_strategy: per_target
+  post_batch_pages: 1
+  load_more:
+    preferPattern: /en/bgr/
+    forceScrollOnly: true
+    scrollSteps: 15000
+    maxActions: 15000
+    idleCycles: 60
+    initialWaitMs: 8000
+    stepDelayMs: 1100
+    waitAfterClickMs: 8000
+    scrollStepFactor: 0.85
+    scrollMinStepPx: 450
+
+- name: ues2_bg_sale
   url: "https://ues.bg/en/bgr/imoti/prodajbi/sofia/all"
-  mode: load_more
-  max_pages: 150
+  mode: pagination
+  max_pages: 500
   delay_ms: 1500
   wait_until: domcontentloaded
   timeout_ms: 45000

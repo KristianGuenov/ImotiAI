@@ -10,15 +10,15 @@
   // eslint-disable-next-line no-var
   var chrome = __g.chrome;
   chrome.runtime = chrome.runtime || {};
-  chrome.runtime.sendMessage = chrome.runtime.sendMessage || function () {};
-  chrome.runtime.onMessage = chrome.runtime.onMessage || { addListener: function () {} };
+  chrome.runtime.sendMessage = chrome.runtime.sendMessage || function () { };
+  chrome.runtime.onMessage = chrome.runtime.onMessage || { addListener: function () { } };
   chrome.storage = chrome.storage || {};
   chrome.storage.sync = chrome.storage.sync || {};
   chrome.storage.sync.get = chrome.storage.sync.get || function (defaults, cb) {
-    try { cb && cb(defaults || {}); } catch (_) {}
+    try { cb && cb(defaults || {}); } catch (_) { }
   };
   chrome.storage.sync.set = chrome.storage.sync.set || function (_items, cb) {
-    try { cb && cb(); } catch (_) {}
+    try { cb && cb(); } catch (_) { }
   };
 
 
@@ -102,103 +102,103 @@
   // Holmes.bg special-case helpers
   // ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// Luximmo.com special-case helpers
-// ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Luximmo.com special-case helpers
+  // ---------------------------------------------------------------------------
 
-function isLuximmoHost(hostname) {
-  const h = String(hostname || "").toLowerCase();
-  return h === "luximmo.com" || h === "www.luximmo.com";
-}
-
-// Luximmo listing pages typically include anchors like:
-// .../luxury-property-46745-... .html
-function closestLuximmoCardRoot(a, maxDepth = 8) {
-  let el = a;
-  for (let i = 0; i < maxDepth && el; i++) {
-    const p = el.parentElement;
-    if (!p) break;
-    let n = 999;
-    try { n = p.querySelectorAll("a[href*='luxury-property-'][href$='.html']").length; } catch (_) { n = 999; }
-    if (n === 1) return p;
-    el = p;
-  }
-  return a.parentElement || a;
-}
-
-function extractLuximmoItemFromAnchor(a) {
-  const root = closestLuximmoCardRoot(a, 8);
-
-  const url = absUrl(a.getAttribute("href") || a.href || "");
-
-  // Prefer heading-like text within the root; fallback to anchor text.
-  let title = null;
-  try {
-    const h = root.querySelector("h1,h2,h3,h4,.title,.property-title,.offer-title");
-    const ht = DomText.normalize(h ? h.textContent : "");
-    if (ht) title = DomText.safeTruncate(ht, 160);
-  } catch (_) {}
-
-  if (!title) {
-    const at = DomText.normalize(a.textContent);
-    if (at) title = DomText.safeTruncate(at, 160);
+  function isLuximmoHost(hostname) {
+    const h = String(hostname || "").toLowerCase();
+    return h === "luximmo.com" || h === "www.luximmo.com";
   }
 
-  const images = [];
-  try {
-    const imgs = Array.from(root.querySelectorAll("img"));
-    for (const img of imgs) {
-      const src = img.currentSrc || img.getAttribute("src") || img.getAttribute("data-src") || "";
-      const u = absUrl(src);
-      if (isUsefulImageSrc(u)) images.push(u);
-      if (images.length >= 8) break;
+  // Luximmo listing pages typically include anchors like:
+  // .../luxury-property-46745-... .html
+  function closestLuximmoCardRoot(a, maxDepth = 8) {
+    let el = a;
+    for (let i = 0; i < maxDepth && el; i++) {
+      const p = el.parentElement;
+      if (!p) break;
+      let n = 999;
+      try { n = p.querySelectorAll("a[href*='luxury-property-'][href$='.html']").length; } catch (_) { n = 999; }
+      if (n === 1) return p;
+      el = p;
     }
-  } catch (_) {}
-
-  const texts = [];
-  try {
-    const nodes = Array.from(root.querySelectorAll("span,div,p,li,strong,em,small")).slice(0, 140);
-    for (const n of nodes) {
-      const t = DomText.normalize(n.textContent);
-      if (!t) continue;
-      if (t.length < 3 || t.length > 180) continue;
-      texts.push(t);
-      if (texts.length >= 10) break;
-    }
-  } catch (_) {}
-
-  return {
-    title: title,
-    url: url || null,
-    image: images[0] || null,
-    images: Array.from(new Set(images)).slice(0, 8),
-    texts: Array.from(new Set(texts)).slice(0, 10),
-    rawText: DomText.visibleText(root, 650),
-  };
-}
-
-function extractLuximmoItemsFromPage() {
-  // Use Luximmo's stable listing URL pattern as the unit.
-  const anchors = Array.from(document.querySelectorAll("a[href*='luxury-property-'][href$='.html']"))
-    .filter((a) => a && a.getAttribute)
-    .filter((a) => !isProbablyFooterOrNav(a));
-
-  if (!anchors.length) return [];
-
-  const seen = new Set();
-  const out = [];
-
-  for (const a of anchors) {
-    const href = a.getAttribute("href") || "";
-    if (!href) continue;
-    const key = href;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(extractLuximmoItemFromAnchor(a));
-    if (out.length >= 250) break;
+    return a.parentElement || a;
   }
-  return out;
-}
+
+  function extractLuximmoItemFromAnchor(a) {
+    const root = closestLuximmoCardRoot(a, 8);
+
+    const url = absUrl(a.getAttribute("href") || a.href || "");
+
+    // Prefer heading-like text within the root; fallback to anchor text.
+    let title = null;
+    try {
+      const h = root.querySelector("h1,h2,h3,h4,.title,.property-title,.offer-title");
+      const ht = DomText.normalize(h ? h.textContent : "");
+      if (ht) title = DomText.safeTruncate(ht, 160);
+    } catch (_) { }
+
+    if (!title) {
+      const at = DomText.normalize(a.textContent);
+      if (at) title = DomText.safeTruncate(at, 160);
+    }
+
+    const images = [];
+    try {
+      const imgs = Array.from(root.querySelectorAll("img"));
+      for (const img of imgs) {
+        const src = img.currentSrc || img.getAttribute("src") || img.getAttribute("data-src") || "";
+        const u = absUrl(src);
+        if (isUsefulImageSrc(u)) images.push(u);
+        if (images.length >= 8) break;
+      }
+    } catch (_) { }
+
+    const texts = [];
+    try {
+      const nodes = Array.from(root.querySelectorAll("span,div,p,li,strong,em,small")).slice(0, 140);
+      for (const n of nodes) {
+        const t = DomText.normalize(n.textContent);
+        if (!t) continue;
+        if (t.length < 3 || t.length > 180) continue;
+        texts.push(t);
+        if (texts.length >= 10) break;
+      }
+    } catch (_) { }
+
+    return {
+      title: title,
+      url: url || null,
+      image: images[0] || null,
+      images: Array.from(new Set(images)).slice(0, 8),
+      texts: Array.from(new Set(texts)).slice(0, 10),
+      rawText: DomText.visibleText(root, 650),
+    };
+  }
+
+  function extractLuximmoItemsFromPage() {
+    // Use Luximmo's stable listing URL pattern as the unit.
+    const anchors = Array.from(document.querySelectorAll("a[href*='luxury-property-'][href$='.html']"))
+      .filter((a) => a && a.getAttribute)
+      .filter((a) => !isProbablyFooterOrNav(a));
+
+    if (!anchors.length) return [];
+
+    const seen = new Set();
+    const out = [];
+
+    for (const a of anchors) {
+      const href = a.getAttribute("href") || "";
+      if (!href) continue;
+      const key = href;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(extractLuximmoItemFromAnchor(a));
+      if (out.length >= 250) break;
+    }
+    return out;
+  }
 
 
   function isHolmesHost(hostname) {
@@ -250,7 +250,7 @@ function extractLuximmoItemsFromPage() {
       const h = root.querySelector("h1,h2,h3,h4,.offer-title,.title");
       const ht = DomText.normalize(h ? h.textContent : "");
       if (ht) title = DomText.safeTruncate(ht, 160);
-    } catch (_) {}
+    } catch (_) { }
 
     if (!title) {
       const at = DomText.normalize(a.textContent);
@@ -266,7 +266,7 @@ function extractLuximmoItemsFromPage() {
         if (isUsefulImageSrc(u)) images.push(u);
         if (images.length >= 8) break;
       }
-    } catch (_) {}
+    } catch (_) { }
 
     const texts = [];
     // Keep texts compatible with existing schema: short lines inside the root
@@ -279,7 +279,7 @@ function extractLuximmoItemsFromPage() {
         texts.push(t);
         if (texts.length >= 10) break;
       }
-    } catch (_) {}
+    } catch (_) { }
 
     return {
       title: title,
@@ -414,6 +414,48 @@ function extractLuximmoItemsFromPage() {
     }
   }
 
+  // Build a reusable selector for a specific clickable control (Next / Load more).
+  // Goal: match exactly 1 element; allow up to a few matches if the site duplicates controls.
+  function buildReusableClickSelector(clickedEl) {
+    const maxUp = 5;
+    let cur = clickedEl;
+
+    const makeSel = (el) => {
+      const tag = (el.tagName || "div").toLowerCase();
+      const id = String(el.id || "").trim();
+      if (id && id.length <= 64 && !/\s/.test(id)) {
+        return `${tag}#${cssEscape(id)}`;
+      }
+      const cls = pickStableClasses(el, 3);
+      let sel = tag;
+      if (cls.length) sel += "." + cls.map(cssEscape).join(".");
+      return sel;
+    };
+
+    let best = null;
+    let bestCount = Infinity;
+
+    for (let i = 0; i < maxUp && cur; i++) {
+      if (!(cur instanceof Element)) break;
+
+      const sel = makeSel(cur);
+      const count = safeQueryAllCount(sel);
+
+      // Prefer unique selectors; otherwise keep the smallest match set.
+      if (count === 1) return { selector: sel, matchCount: count };
+      if (count > 1 && count < bestCount && count <= 8) {
+        best = sel;
+        bestCount = count;
+      }
+
+      cur = cur.parentElement;
+    }
+
+    // Fallback: try the clicked tag
+    const tag = (clickedEl?.tagName || "button").toLowerCase();
+    return { selector: best || tag, matchCount: best ? bestCount : safeQueryAllCount(tag) };
+  }
+
   function firstNonEmpty(arr) {
     for (const x of arr) {
       if (x) return x;
@@ -474,7 +516,7 @@ function extractLuximmoItemsFromPage() {
   class ListDetector {
     constructor(options = {}) {
       this.MIN_ITEMS = 4;
-      this.MAX_ITEMS = 80;
+      this.MAX_ITEMS = 2000;
       this.preferHrefIncludes = options.preferHrefIncludes || null;
     }
     detect() {
@@ -605,14 +647,14 @@ function extractLuximmoItemsFromPage() {
             if ((u.pathname || "").toLowerCase().includes(this.preferHrefIncludes.toLowerCase())) {
               score += 1500;
             }
-          } catch (_) {}
+          } catch (_) { }
         } else {
           try {
             const u = new URL(l.href, location.href);
             if (u.hostname === location.hostname && (u.pathname || "").split("/").filter(Boolean).length >= 2) {
               score += 150;
             }
-          } catch (_) {}
+          } catch (_) { }
         }
 
         if (this._isFractionLikeTitle(text)) score -= 2000;
@@ -659,7 +701,7 @@ function extractLuximmoItemsFromPage() {
           try {
             const u = new URL(a.href, location.href);
             if ((u.pathname || "").toLowerCase().includes(this.preferHrefIncludes.toLowerCase())) score += 40;
-          } catch (_) {}
+          } catch (_) { }
         }
 
         if (score > bestScore) {
@@ -676,8 +718,17 @@ function extractLuximmoItemsFromPage() {
 
     _pickImages(el) {
       const imgs = Array.from(el.querySelectorAll("img"))
-        .map((img) => img.currentSrc || img.src)
-        .filter((src) => !!src);
+        .map((img) => img.currentSrc || img.getAttribute("src") || img.getAttribute("data-src") || "")
+        .map((src) => String(src || "").trim())
+        .filter((src) => !!src)
+        // Drop UI/icon assets and SVGs (common on ues.bg)
+        .filter((src) => {
+          const s = src.toLowerCase();
+          if (s.startsWith("data:")) return false;
+          if (s.includes(".svg")) return false;
+          if (s.includes("/assets/images/")) return false;
+          return true;
+        });
       return Array.from(new Set(imgs)).slice(0, 8);
     }
 
@@ -809,7 +860,7 @@ function extractLuximmoItemsFromPage() {
 
       const clickEl = (el) => {
         if (!el) return false;
-        try { el.scrollIntoView({ block: "center" }); } catch (_) {}
+        try { el.scrollIntoView({ block: "center" }); } catch (_) { }
         try {
           el.click();
           return true;
@@ -832,7 +883,7 @@ function extractLuximmoItemsFromPage() {
 
         // Some sites only render pagination after scrolling
         if (!el) {
-          try { window.scrollTo(0, document.body.scrollHeight); } catch (_) {}
+          try { window.scrollTo(0, document.body.scrollHeight); } catch (_) { }
           await new Promise((r) => setTimeout(r, 350));
           el = tryQuery(sel);
         }
@@ -889,30 +940,100 @@ function extractLuximmoItemsFromPage() {
       return true;
     }
 
+
+    static _findScrollableContainer(options = {}) {
+      // Explicit selector override (if you know the scroll container)
+      const sel = (options && options.scrollContainerSelector) ? String(options.scrollContainerSelector) : "";
+      if (sel) {
+        try {
+          const el = document.querySelector(sel);
+          if (el) return el;
+        } catch (_) { }
+      }
+
+      // Heuristic: pick a large element that can scroll vertically.
+      // We do NOT require overflowY === 'auto'/'scroll' because some sites use custom scrolling.
+      const candidates = Array.from(document.querySelectorAll("body *")).slice(0, 4000);
+      let best = null;
+      let bestScore = -Infinity;
+
+      for (const el of candidates) {
+        try {
+          const ch = el.clientHeight || 0;
+          const sh = el.scrollHeight || 0;
+          if (ch < 200) continue;
+          if (sh <= ch + 80) continue;
+
+          const r = el.getBoundingClientRect();
+          const area = Math.max(0, r.width) * Math.max(0, r.height);
+          const score = area + (sh - ch) * 2;
+          if (score > bestScore) {
+            bestScore = score;
+            best = el;
+          }
+        } catch (_) { }
+      }
+      return best;
+    }
+
     static _findLoadMoreControl(options = {}) {
+      // Safety: prevent accidental navigation into listing detail pages.
+      const preferPattern = (options && options.preferPattern) ? String(options.preferPattern) : "";
+      const listPathHint = (options && options.listPathHint) ? String(options.listPathHint) : "";
+      const strict = !!(options && options.strict);
+
+      const isLikelyDetailHref = (href) => {
+        try {
+          const u = new URL(href, location.href);
+          const p = u.pathname || "";
+          if (preferPattern && p.includes(preferPattern) && /-\d+$/.test(p) && (!listPathHint || !p.includes(listPathHint))) {
+            return true;
+          }
+        } catch (_) { }
+        return false;
+      };
+
+      const isSafeListAnchor = (el) => {
+        if (!el || el.tagName !== "A") return false;
+        const href = el.getAttribute("href") || "";
+        if (!href) return false;
+        if (isLikelyDetailHref(href)) return false;
+        if (!strict) return true;
+        try {
+          const u = new URL(href, location.href);
+          const p = u.pathname || "";
+          const q = u.search || "";
+          if (listPathHint && !p.includes(listPathHint)) return false;
+          if (!/([?&])page=\d+/.test(q) && !/load|more|next|още|покажи|виж/i.test(el.textContent || "")) return false;
+          return true;
+        } catch (_) {
+          return false;
+        }
+      };
+
       // Allow explicit selector override
       const explicit = (options && options.buttonSelector) ? String(options.buttonSelector) : null;
       if (explicit) {
         try {
           const el = document.querySelector(explicit);
           if (el && LoadMore._isVisible(el)) return el;
-        } catch (_) {}
+        } catch (_) { }
       }
 
       const keywords = (options && Array.isArray(options.keywords) && options.keywords.length)
         ? options.keywords.map((x) => LoadMore._norm(x)).filter(Boolean)
         : [
-            "зареди още",
-            "зареди oще",
-            "покажи още",
-            "покажи oще",
-            "виж още",
-            "още",
-            "load more",
-            "show more",
-            "more",
-            "see more"
-          ];
+          "зареди още",
+          "зареди oще",
+          "покажи още",
+          "покажи oще",
+          "виж още",
+          "още",
+          "load more",
+          "show more",
+          "more",
+          "see more"
+        ];
 
       const nodes = Array.from(document.querySelectorAll("button, a[href], [role='button'], input[type='button'], input[type='submit']"))
         .slice(0, 800);
@@ -957,7 +1078,7 @@ function extractLuximmoItemsFromPage() {
         try {
           const r = el.getBoundingClientRect();
           if (r && r.top > window.innerHeight * 0.4) score += 1;
-        } catch (_) {}
+        } catch (_) { }
 
         if (score > bestScore && score > 0) {
           bestScore = score;
@@ -975,7 +1096,7 @@ function extractLuximmoItemsFromPage() {
         const finish = (grew) => {
           if (done) return;
           done = true;
-          try { obs.disconnect(); } catch (_) {}
+          try { obs.disconnect(); } catch (_) { }
           resolve(!!grew);
         };
 
@@ -983,13 +1104,13 @@ function extractLuximmoItemsFromPage() {
         try {
           const c0 = detector.detect()?.items?.length || 0;
           if (c0 > prevCount) return finish(true);
-        } catch (_) {}
+        } catch (_) { }
 
         const obs = new MutationObserver(() => {
           try {
             const c = detector.detect()?.items?.length || 0;
             if (c > prevCount) finish(true);
-          } catch (_) {}
+          } catch (_) { }
         });
 
         try {
@@ -1004,58 +1125,157 @@ function extractLuximmoItemsFromPage() {
 
     static async run(options = {}) {
       // Strategy:
-      // 1) Prefer clicking a visible "load more" control (e.g., "Зареди още")
-      // 2) Fall back to scroll-to-bottom
-      // Stop when item count doesn't increase for idleCycles attempts.
+      // 1) Prefer clicking a visible "load more" control (unless forceScrollOnly=true)
+      // 2) Fall back to incremental scrolling (window or detected scroll container)
+      // Stop when *new unique listing URLs observed* does not increase for idleCycles attempts.
+      //
+      // v6 minimal patch:
+      // - idleCycles is no longer capped at 10
+      // - optional initialWaitMs for hydration
+      // - removed stray duplicate return block
 
-      const maxActions = Math.max(1, Math.min(200, Number(options.maxActions || options.scrollSteps || 12)));
-      const idleCycles = Math.max(1, Math.min(10, Number(options.idleCycles || 2)));
-      const stepDelayMs = Math.max(200, Math.min(6000, Number(options.stepDelayMs || 900)));
-      const waitAfterClickMs = Math.max(300, Math.min(20000, Number(options.waitAfterClickMs || 4500)));
+      const opts = { ...(options || {}) };
 
-      const preferPattern = chooseListingLinkPatternFromPage();
+      // Allow per-host override when available (extension mode).
+      if (!opts.buttonSelector) {
+        try {
+          const host = location.hostname;
+          const ov = await SiteOverrides.getForHost(host);
+          const sel = ov ? (ov.loadMoreSelector || ov.loadMoreButtonSelector || ov.loadMoreClickSelector) : null;
+          if (sel) opts.buttonSelector = String(sel);
+        } catch (_) { }
+      }
+
+      const maxActions = Math.max(1, Math.min(20000, Number((opts && (opts.scrollSteps ?? opts.maxActions)) ?? 12)));
+      const idleCycles = Math.max(1, Math.min(200, Number(opts.idleCycles || 2)));
+      const stepDelayMs = Math.max(200, Math.min(15000, Number(opts.stepDelayMs || 900)));
+      const waitAfterClickMs = Math.max(300, Math.min(30000, Number(opts.waitAfterClickMs || 4500)));
+      const initialWaitMs = Math.max(0, Math.min(60000, Number(opts.initialWaitMs || 0)));
+
+      const preferPattern = (opts && opts.preferPattern) ? String(opts.preferPattern) : chooseListingLinkPatternFromPage();
       const detector = new ListDetector({ preferHrefIncludes: preferPattern });
 
-      const getCount = () => (detector.detect()?.items?.length || 0);
+      // Stop based on *new unique URLs*, not DOM item count (virtualized lists).
+      // IMPORTANT: if the site profile provides selectorCards, use the same selector-based extraction
+      // as ExtractionRunner (some sites don't render <a href> on cards).
+      const hostname = location.hostname;
+      let override = null;
+      try {
+        override = await SiteOverrides.getForHost(hostname);
+      } catch (_) {}
 
-      let prevCount = getCount();
+      const getUrls = () => {
+        try {
+          if (override && Array.isArray(override.selectorCards) && override.selectorCards.length) {
+            const runner = new ExtractionRunner();
+            const extracted = runner._extractUsingSelectors(override.selectorCards, preferPattern);
+            const items = extracted && Array.isArray(extracted.items) ? extracted.items : [];
+            const out = [];
+            for (const it of items) {
+              if (it && it.url) out.push(String(it.url));
+            }
+            return out;
+          }
+
+          const det = detector.detect();
+          const arr = (det && Array.isArray(det.items)) ? det.items : [];
+          const out = [];
+          for (const it of arr) {
+            if (it && it.url) out.push(String(it.url));
+          }
+          return out;
+        } catch (_) {
+          return [];
+        }
+      };
+
+      const seen = new Set();
+      const seed = () => {
+        const u = getUrls();
+        for (const x of u) seen.add(x);
+        return u.length;
+      };
+
+      // Initial hydration wait (Next.js / virtualized UIs)
+      const t0 = Date.now();
+      let initialCount = seed();
+      if (initialCount === 0 && initialWaitMs > 0) {
+        while (Date.now() - t0 < initialWaitMs) {
+          await new Promise((r) => setTimeout(r, 250));
+          initialCount = seed();
+          if (initialCount > 0) break;
+        }
+      }
+
       let idle = 0;
       let clicks = 0;
       let scrolls = 0;
+      let newTotal = 0;
+
+      const forceScrollOnly = !!(opts && opts.forceScrollOnly);
+      const scrollContainer = LoadMore._findScrollableContainer(opts);
+
+      const doScrollToBottom = () => {
+        const stepFactor = (opts && opts.scrollStepFactor) ? Number(opts.scrollStepFactor) : 0.85;
+        const minStep = (opts && opts.scrollMinStepPx) ? Number(opts.scrollMinStepPx) : 450;
+
+        try {
+          if (scrollContainer) {
+            const ch = scrollContainer.clientHeight || 800;
+            const step = Math.max(minStep, Math.floor(ch * stepFactor));
+            const before = scrollContainer.scrollTop || 0;
+            scrollContainer.scrollTop = before + step;
+            if (scrollContainer.scrollTop + ch >= (scrollContainer.scrollHeight || 0) - 80) {
+              scrollContainer.scrollTop = scrollContainer.scrollHeight;
+            }
+            return true;
+          }
+        } catch (_) { }
+
+        try {
+          const ch = window.innerHeight || 800;
+          const step = Math.max(minStep, Math.floor(ch * stepFactor));
+          window.scrollBy(0, step);
+        } catch (_) { }
+        return false;
+      };
 
       for (let i = 0; i < maxActions; i++) {
-        const btn = LoadMore._findLoadMoreControl(options);
+        const beforeSize = seen.size;
+
+        let btn = null;
+        if (!forceScrollOnly) {
+          btn = LoadMore._findLoadMoreControl(opts);
+        }
 
         if (btn) {
-          try {
-            btn.scrollIntoView({ block: "center" });
-          } catch (_) {}
+          try { btn.scrollIntoView({ block: "center" }); } catch (_) { }
           try {
             btn.click();
             clicks += 1;
           } catch (_) {
-            // if click failed, attempt scroll fallback
-            window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
+            doScrollToBottom();
             scrolls += 1;
           }
-
-          // Wait for DOM to change / new items to appear
-          const grew = await LoadMore._waitForMoreItems(detector, prevCount, waitAfterClickMs);
-          if (!grew) {
-            // also give a short grace delay (some sites load late)
-            await new Promise((r) => setTimeout(r, stepDelayMs));
-          }
+          await new Promise((r) => setTimeout(r, waitAfterClickMs));
         } else {
-          window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
+          doScrollToBottom();
           scrolls += 1;
           await new Promise((r) => setTimeout(r, stepDelayMs));
         }
 
-        const count = getCount();
+        const urls = getUrls();
+        for (const u of urls) {
+          if (!seen.has(u)) {
+            seen.add(u);
+            newTotal += 1;
+          }
+        }
 
-        if (count > prevCount) {
-          prevCount = count;
+        const added = seen.size - beforeSize;
+        if (added > 0) {
           idle = 0;
+          await new Promise((r) => setTimeout(r, Math.max(stepDelayMs, 1200)));
         } else {
           idle += 1;
           if (idle >= idleCycles) break;
@@ -1064,10 +1284,18 @@ function extractLuximmoItemsFromPage() {
 
       return {
         ok: true,
-        finalCount: prevCount,
+        initialCount,
+        finalCount: seen.size,
+        newTotal,
         clicks,
         scrolls,
-        preferPattern: preferPattern || null
+        preferPattern: preferPattern || null,
+        usedScrollContainer: !!scrollContainer,
+        requestedScrollSteps: (opts && opts.scrollSteps) ? Number(opts.scrollSteps) : null,
+        requestedMaxActions: (opts && opts.maxActions) ? Number(opts.maxActions) : null,
+        maxActionsUsed: maxActions,
+        idleCyclesUsed: idleCycles,
+        initialWaitMs: initialWaitMs,
       };
     }
   }
@@ -1084,31 +1312,31 @@ function extractLuximmoItemsFromPage() {
       const override = await SiteOverrides.getForHost(hostname);
 
 
-// Luximmo.com list pages: anchor-based extraction using stable listing URL pattern
-// avoids page-level URL fallbacks that collapse many items into 1 unique.
-if (isLuximmoHost(hostname)) {
-  const items = extractLuximmoItemsFromPage();
-  if (items && items.length >= 3) {
-    const timingMs = Math.round(nowMs() - t0);
-    return {
-      ok: true,
-      result: {
-        dataVersion: 1,
-        sourceUrl: location.href,
-        pageTitle: document.title || null,
-        extractedAt: new Date().toISOString(),
-        meta: {
-          siteProfileUsed: hostname,
-          strategyUsed: "luximmo(anchor-root)",
-          timingMs,
-          itemCount: items.length,
-          sampleLinks: items.map((it) => it.url).filter(Boolean).slice(0, 5),
-        },
-        items,
-      },
-    };
-  }
-}
+      // Luximmo.com list pages: anchor-based extraction using stable listing URL pattern
+      // avoids page-level URL fallbacks that collapse many items into 1 unique.
+      if (isLuximmoHost(hostname)) {
+        const items = extractLuximmoItemsFromPage();
+        if (items && items.length >= 3) {
+          const timingMs = Math.round(nowMs() - t0);
+          return {
+            ok: true,
+            result: {
+              dataVersion: 1,
+              sourceUrl: location.href,
+              pageTitle: document.title || null,
+              extractedAt: new Date().toISOString(),
+              meta: {
+                siteProfileUsed: hostname,
+                strategyUsed: "luximmo(anchor-root)",
+                timingMs,
+                itemCount: items.length,
+                sampleLinks: items.map((it) => it.url).filter(Boolean).slice(0, 5),
+              },
+              items,
+            },
+          };
+        }
+      }
 
       // Prefer override selectorCards if present
       if (override?.selectorCards?.length) {
@@ -1183,7 +1411,7 @@ if (isLuximmoHost(hostname)) {
           // Build a reusable selector from a representative root
           const { selector } = buildReusableCardSelector(roots[0]);
           let nodes = [];
-          try { nodes = Array.from(document.querySelectorAll(selector)); } catch (_) {}
+          try { nodes = Array.from(document.querySelectorAll(selector)); } catch (_) { }
 
           if (nodes.length >= 3) {
             const extractor = new ItemExtractor({ preferHrefIncludes: preferPattern });
@@ -1236,7 +1464,7 @@ if (isLuximmoHost(hostname)) {
         items,
       };
       return { ok: true, result };
-    }
+  }
 
     _extractUsingSelectors(selectors, preferPattern) {
       let nodes = [];
@@ -1247,7 +1475,7 @@ if (isLuximmoHost(hostname)) {
             nodes = found;
             break;
           }
-        } catch (_) {}
+        } catch (_) { }
       }
 
       if (!nodes.length) return null;
@@ -1299,9 +1527,9 @@ if (isLuximmoHost(hostname)) {
 
       const matchingAnchors = listingLinkPattern
         ? allAnchors.filter((a) => {
-            const u = tryUrl(a.href);
-            return (u?.pathname || "").toLowerCase().includes(listingLinkPattern.toLowerCase());
-          })
+          const u = tryUrl(a.href);
+          return (u?.pathname || "").toLowerCase().includes(listingLinkPattern.toLowerCase());
+        })
         : [];
 
       const wrapperCounts = new Map();
@@ -1333,9 +1561,9 @@ if (isLuximmoHost(hostname)) {
           wrapperCandidates: rankedWrappers,
           suggestedOverride: bestSelector
             ? {
-                selectorCards: [bestSelector],
-                listingLinkPattern: listingLinkPattern || null,
-              }
+              selectorCards: [bestSelector],
+              listingLinkPattern: listingLinkPattern || null,
+            }
             : null,
         },
       };
@@ -1344,200 +1572,227 @@ if (isLuximmoHost(hostname)) {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Click-to-select picker (highlights elements; click returns selector)
-  // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Click-to-select picker (highlights elements; click returns selector)
+// ---------------------------------------------------------------------------
 
-  class Picker {
-    constructor() {
-      this.active = false;
-      this.overlay = null;
-      this._onMove = this._onMove.bind(this);
-      this._onClick = this._onClick.bind(this);
-      this._lastEl = null;
+class Picker {
+  constructor() {
+    this.active = false;
+    this.overlay = null;
+    this.kind = "card";
+    this._onMove = this._onMove.bind(this);
+    this._onClick = this._onClick.bind(this);
+    this._lastEl = null;
+  }
+
+  start(kind = "card") {
+    if (this.active) return;
+    this.active = true;
+    this.kind = String(kind || "card");
+
+    this.overlay = document.createElement("div");
+    this.overlay.style.position = "fixed";
+    this.overlay.style.pointerEvents = "none";
+    this.overlay.style.zIndex = "2147483647";
+    this.overlay.style.outline = "3px solid lime";
+    this.overlay.style.background = "rgba(0,255,0,0.05)";
+    document.documentElement.appendChild(this.overlay);
+
+    document.addEventListener("mousemove", this._onMove, true);
+    document.addEventListener("click", this._onClick, true);
+  }
+
+  stop() {
+    if (!this.active) return;
+    this.active = false;
+
+    document.removeEventListener("mousemove", this._onMove, true);
+    document.removeEventListener("click", this._onClick, true);
+
+    if (this.overlay) this.overlay.remove();
+    this.overlay = null;
+    this._lastEl = null;
+  }
+
+  _onMove(e) {
+    if (!this.active) return;
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    if (!el || !(el instanceof Element)) return;
+    if (this.overlay && el === this.overlay) return;
+
+    const target = (this.kind === "card")
+      ? (el.closest("article, li, div") || el)
+      : (el.closest("button, a[href], [role='button'], input[type='button'], input[type='submit']") || el);
+    if (!(target instanceof Element)) return;
+
+    this._lastEl = target;
+
+    const r = target.getBoundingClientRect();
+    if (!this.overlay) return;
+    this.overlay.style.left = `${Math.max(0, r.left)}px`;
+    this.overlay.style.top = `${Math.max(0, r.top)}px`;
+    this.overlay.style.width = `${Math.max(0, r.width)}px`;
+    this.overlay.style.height = `${Math.max(0, r.height)}px`;
+  }
+
+  _onClick(e) {
+    if (!this.active) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const clicked = this._lastEl || (document.elementFromPoint(e.clientX, e.clientY) instanceof Element
+      ? document.elementFromPoint(e.clientX, e.clientY)
+      : null);
+
+    if (!(clicked instanceof Element)) {
+      this.stop();
+      return;
     }
 
-    start() {
-      if (this.active) return;
-      this.active = true;
+    const kind = String(this.kind || "card");
 
-      this.overlay = document.createElement("div");
-      this.overlay.style.position = "fixed";
-      this.overlay.style.pointerEvents = "none";
-      this.overlay.style.zIndex = "2147483647";
-      this.overlay.style.outline = "3px solid lime";
-      this.overlay.style.background = "rgba(0,255,0,0.05)";
-      document.documentElement.appendChild(this.overlay);
-
-      document.addEventListener("mousemove", this._onMove, true);
-      document.addEventListener("click", this._onClick, true);
-    }
-
-    stop() {
-      if (!this.active) return;
-      this.active = false;
-
-      document.removeEventListener("mousemove", this._onMove, true);
-      document.removeEventListener("click", this._onClick, true);
-
-      if (this.overlay) this.overlay.remove();
-      this.overlay = null;
-      this._lastEl = null;
-    }
-
-    _onMove(e) {
-      if (!this.active) return;
-      const el = document.elementFromPoint(e.clientX, e.clientY);
-      if (!el || !(el instanceof Element)) return;
-      if (this.overlay && el === this.overlay) return;
-
-      const target = el.closest("article, li, div") || el;
-      if (!(target instanceof Element)) return;
-
-      this._lastEl = target;
-
-      const r = target.getBoundingClientRect();
-      if (!this.overlay) return;
-      this.overlay.style.left = `${Math.max(0, r.left)}px`;
-      this.overlay.style.top = `${Math.max(0, r.top)}px`;
-      this.overlay.style.width = `${Math.max(0, r.width)}px`;
-      this.overlay.style.height = `${Math.max(0, r.height)}px`;
-    }
-
-    _onClick(e) {
-      if (!this.active) return;
-
-      e.preventDefault();
-      e.stopPropagation();
-
-      const clicked = this._lastEl || (document.elementFromPoint(e.clientX, e.clientY) instanceof Element
-        ? document.elementFromPoint(e.clientX, e.clientY)
-        : null);
-
-      if (!(clicked instanceof Element)) {
-        this.stop();
-        return;
-      }
-
-      const { selector, matchCount } = buildReusableCardSelector(clicked);
-
-      const anchors = Array.from(clicked.querySelectorAll("a[href]"));
-      let listingLinkPattern = null;
-      let sampleListingHref = null;
-
-      for (const a of anchors) {
-        const u = tryUrl(a.href);
-        if (!u) continue;
-        const p = (u.pathname || "").toLowerCase();
-        if (p.includes("/obiava/")) listingLinkPattern = "/obiava/";
-        else if (p.includes("/offer/")) listingLinkPattern = "/offer/";
-        else if (p.includes("/listing/")) listingLinkPattern = "/listing/";
-        else if (p.includes("/ad/")) listingLinkPattern = "/ad/";
-        else if (p.includes("/property/")) listingLinkPattern = "/property/";
-        if (listingLinkPattern) {
-          sampleListingHref = a.href;
-          break;
-        }
-      }
-
-      if (!listingLinkPattern) listingLinkPattern = chooseListingLinkPatternFromPage();
-      if (!sampleListingHref) sampleListingHref = firstNonEmpty(anchors.map((a) => a.href));
+    // For Next/Load-more: pick the clickable element itself, not the surrounding card.
+    if (kind !== "card") {
+      const clickEl = clicked.closest("button, a[href], [role='button'], input[type='button'], input[type='submit']") || clicked;
+      const { selector, matchCount } = buildReusableClickSelector(clickEl);
 
       chrome.runtime.sendMessage({
         type: "PICKER_RESULT",
         result: {
+          kind,
           hostname: location.hostname,
           url: location.href,
           selector,
           matchCount,
-          listingLinkPattern,
-          sampleListingHref,
         },
       });
 
       this.stop();
+      return;
     }
-  }
 
-  const picker = new Picker();
+    const { selector, matchCount } = buildReusableCardSelector(clicked);
 
-  // ---------------------------------------------------------------------------
-  // ✅ ADDITION: Initialize extractor API for Playwright runner (fixes timeout)
-  // ---------------------------------------------------------------------------
+    const anchors = Array.from(clicked.querySelectorAll("a[href]"));
+    let listingLinkPattern = null;
+    let sampleListingHref = null;
 
-  window.__imotiExtractor = window.__imotiExtractor || {
-    version: 1,
-    run: async () => {
-      const runner = new ExtractionRunner();
-      return await runner.run();
-    },
-    navigateNext: async () => {
-      return await Navigation.navigateNext();
-    },
-    loadMore: async (options = {}) => {
-      return await LoadMore.run(options);
-    },
-    loadMoreThenExtract: async (options = {}) => {
-      await LoadMore.run(options);
-      const runner = new ExtractionRunner();
-      return await runner.run();
-    },
-  };
-
-  // ---------------------------------------------------------------------------
-  // Messaging
-  // ---------------------------------------------------------------------------
-
-  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    (async () => {
-      const type = msg?.type;
-
-      if (type === "RUN_EXTRACTION") {
-        const runner = new ExtractionRunner();
-        sendResponse(await runner.run());
-        return;
+    for (const a of anchors) {
+      const u = tryUrl(a.href);
+      if (!u) continue;
+      const p = (u.pathname || "").toLowerCase();
+      if (p.includes("/obiava/")) listingLinkPattern = "/obiava/";
+      else if (p.includes("/offer/")) listingLinkPattern = "/offer/";
+      else if (p.includes("/listing/")) listingLinkPattern = "/listing/";
+      else if (p.includes("/ad/")) listingLinkPattern = "/ad/";
+      else if (p.includes("/property/")) listingLinkPattern = "/property/";
+      if (listingLinkPattern) {
+        sampleListingHref = a.href;
+        break;
       }
+    }
 
-      if (type === "NAVIGATE_NEXT_PAGE") {
-        const didNavigate = await Navigation.navigateNext();
-        sendResponse({ ok: true, didNavigate });
-        return;
-      }
+    if (!listingLinkPattern) listingLinkPattern = chooseListingLinkPatternFromPage();
+    if (!sampleListingHref) sampleListingHref = firstNonEmpty(anchors.map((a) => a.href));
 
-      if (type === "LOAD_MORE") {
-        await LoadMore.run(msg.options || {});
-        sendResponse({ ok: true });
-        return;
-      }
-
-      if (type === "LOAD_MORE_THEN_EXTRACT") {
-        await LoadMore.run(msg.options || {});
-        const runner = new ExtractionRunner();
-        sendResponse(await runner.run());
-        return;
-      }
-
-      if (type === "ONBOARD_SITE") {
-        sendResponse(Onboarding.run());
-        return;
-      }
-
-      if (type === "START_PICKER") {
-        picker.start();
-        sendResponse({ ok: true, started: true });
-        return;
-      }
-
-      if (type === "STOP_PICKER") {
-        picker.stop();
-        sendResponse({ ok: true, stopped: true });
-        return;
-      }
-
-      sendResponse({ ok: false, error: "Unknown message type" });
-    })().catch((e) => {
-      sendResponse({ ok: false, error: String(e?.message || e) });
+    chrome.runtime.sendMessage({
+      type: "PICKER_RESULT",
+      result: {
+        kind,
+        hostname: location.hostname,
+        url: location.href,
+        selector,
+        matchCount,
+        listingLinkPattern,
+        sampleListingHref,
+      },
     });
-    return true;
+
+    this.stop();
+  }
+}
+
+const picker = new Picker();
+
+// ---------------------------------------------------------------------------
+// ✅ ADDITION: Initialize extractor API for Playwright runner (fixes timeout)
+// ---------------------------------------------------------------------------
+
+window.__imotiExtractor = window.__imotiExtractor || {
+  version: 1,
+  run: async () => {
+    const runner = new ExtractionRunner();
+    return await runner.run();
+  },
+  navigateNext: async () => {
+    return await Navigation.navigateNext();
+  },
+  loadMore: async (options = {}) => {
+    return await LoadMore.run(options);
+  },
+  loadMoreThenExtract: async (options = {}) => {
+    await LoadMore.run(options);
+    const runner = new ExtractionRunner();
+    return await runner.run();
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Messaging
+// ---------------------------------------------------------------------------
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  (async () => {
+    const type = msg?.type;
+
+    if (type === "RUN_EXTRACTION") {
+      const runner = new ExtractionRunner();
+      sendResponse(await runner.run());
+      return;
+    }
+
+    if (type === "NAVIGATE_NEXT_PAGE") {
+      const didNavigate = await Navigation.navigateNext();
+      sendResponse({ ok: true, didNavigate });
+      return;
+    }
+
+    if (type === "LOAD_MORE") {
+      await LoadMore.run(msg.options || {});
+      sendResponse({ ok: true });
+      return;
+    }
+
+    if (type === "LOAD_MORE_THEN_EXTRACT") {
+      await LoadMore.run(msg.options || {});
+      const runner = new ExtractionRunner();
+      sendResponse(await runner.run());
+      return;
+    }
+
+    if (type === "ONBOARD_SITE") {
+      sendResponse(Onboarding.run());
+      return;
+    }
+
+    if (type === "START_PICKER") {
+      picker.start(msg.kind || "card");
+      sendResponse({ ok: true, started: true });
+      return;
+    }
+
+    if (type === "STOP_PICKER") {
+      picker.stop();
+      sendResponse({ ok: true, stopped: true });
+      return;
+    }
+
+    sendResponse({ ok: false, error: "Unknown message type" });
+  })().catch((e) => {
+    sendResponse({ ok: false, error: String(e?.message || e) });
   });
-})();
+  return true;
+});
+}) ();

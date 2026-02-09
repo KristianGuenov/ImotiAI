@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+from sqlalchemy import text
 from datetime import datetime, timezone
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
@@ -32,6 +33,47 @@ def _sanitize(value):
     return value
 
 
+def _normalize_url_list(value) -> List[str]:
+    if not value:
+        return []
+    if isinstance(value, (tuple, set)):
+        value = list(value)
+    if not isinstance(value, list):
+        return []
+    out: List[str] = []
+    for v in value:
+        if v is None:
+            continue
+        s = str(v).strip()
+        if not s:
+            continue
+        out.append(s)
+    # de-dupe while preserving order
+    seen: Set[str] = set()
+    deduped: List[str] = []
+    for u in out:
+        if u in seen:
+            continue
+        seen.add(u)
+        deduped.append(u)
+    return deduped
+
+
+def _apply_images_to_listing(session: Session, *, item_url: str, cover: Optional[str], images: List[str]) -> None:
+    """Persist cover + images to listings, even if the ORM model lacks the images column."""
+    # cover is optional; don't overwrite with NULL
+    session.execute(
+        text(
+            """
+            UPDATE listings
+            SET
+              image = COALESCE(:cover, image),
+              images = :images::text[]
+            WHERE item_url = :item_url
+            """
+        ),
+        {"cover": cover, "images": images, "item_url": item_url},
+    )
 def _hash_text(s: Optional[str]) -> Optional[str]:
     if not s:
         return None
@@ -410,6 +452,10 @@ class ExtractionService:
         full_desc = _sanitize(getattr(first, "rawText", None)) if first is not None else None
         full_desc = (full_desc or "").strip() or None
         desc_hash = _hash_text(full_desc) if full_desc else None
+        cover = _sanitize(getattr(first, "image", None)) if first is not None else None
+        images = _sanitize(list(getattr(first, "images", None) or [])) if first is not None else []
+        images = _normalize_url_list(images)
+        has_new_images = bool(images)
 
         now = datetime.now(timezone.utc)
 
@@ -421,7 +467,7 @@ class ExtractionService:
                 domain=_url_domain(source_url),
                 title=_sanitize(payload.pageTitle) or _sanitize(getattr(first, "title", None)),
                 title_hash=_hash_text(_sanitize(payload.pageTitle) or _sanitize(getattr(first, "title", None))),
-                image=_sanitize(getattr(first, "image", None)) if first is not None else None,
+                image=cover,
                 created_at=now,
                 updated_at=now,
                 detail_done=True,
@@ -431,8 +477,8 @@ class ExtractionService:
             )
             self.session.add(listing)
         else:
-            # Avoid DB churn: if already detailed with same description, do nothing.
-            if listing.detail_done and (listing.description_hash or None) == (desc_hash or None):
+            # Avoid DB churn: if already detailed with same description and no new images, do nothing.
+            if (not has_new_images) and listing.detail_done and (listing.description_hash or None) == (desc_hash or None):
                 run = self._latest_index_run_for_url(source_url)
                 if run is not None:
                     return self._to_out(run)
@@ -443,12 +489,25 @@ class ExtractionService:
             listing.description = full_desc
             listing.description_hash = desc_hash
 
-        # 2) Overwrite raw_text on the latest index item for that URL (keep images/texts intact)
+        # Persist cover + images to listings (images column may not be mapped on the ORM model)
+        if cover and listing is not None:
+            listing.image = cover
+        if has_new_images or cover:
+            self.session.flush()
+            _apply_images_to_listing(self.session, item_url=source_url, cover=cover, images=images)
+
+        # 2) Overwrite raw_text on the latest index item for that URL (also refresh images if provided)
         idx_item, idx_run = self._latest_index_item_and_run(source_url)
         if idx_item is not None and full_desc:
             idx_item.raw_text = full_desc
             if not idx_item.title and payload.pageTitle:
                 idx_item.title = _sanitize(payload.pageTitle)
+
+        if idx_item is not None:
+            if cover:
+                idx_item.image = cover
+            if has_new_images:
+                idx_item.images = images
 
         if commit:
             self.session.commit()
@@ -501,7 +560,38 @@ class ExtractionService:
             return None
         stmt = select(ExtractionRun).where(ExtractionRun.source_url == source_url).order_by(desc(ExtractionRun.id)).limit(1)
         return self.session.execute(stmt).scalars().first()
+    def _apply_detail_fields_to_listing(db, source_url: str, item: dict) -> None:
+        """
+        Apply selected extracted fields to listings row matched by item_url == source_url.
 
+        Works even if ORM Listing model doesn't yet include the new columns,
+        because we update via SQL text().
+        """
+        cover = item.get("image")
+        images = item.get("images") or []
+        if not isinstance(images, list):
+            images = []
+
+        # ensure all are strings and non-empty
+        images = [str(u) for u in images if u]
+
+        db.execute(
+            text(
+                """
+                UPDATE listings
+                SET
+                image = COALESCE(:image, image),
+                images = :images::text[],
+                detail_done = TRUE
+                WHERE item_url = :item_url
+                """
+            ),
+            {
+                "image": cover,
+                "images": images,
+                "item_url": source_url,
+            },
+        )
     def _to_out(self, run: ExtractionRun) -> ExtractionOut:
         items = [
             ExtractedItem(
