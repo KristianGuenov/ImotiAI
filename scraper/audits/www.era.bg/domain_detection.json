@@ -1,0 +1,20 @@
+{
+  "domain": "www.era.bg",
+  "detected": {
+    "has_jsonld": true,
+    "has_state_blob": false,
+    "has_kv_pairs": false,
+    "kv_markup": "none",
+    "has_amenity_chips": null,
+    "has_contacts": false,
+    "has_price": false,
+    "gallery_type": "background_image",
+    "has_map_coords": false,
+    "primary_payload_source": "description_only",
+    "kv_pair_count_avg": 0,
+    "text_length_avg": 1272,
+    "jsonld_block_count_avg": 2,
+    "state_blob_count_avg": 0
+  },
+  "sample_count": 3
+}

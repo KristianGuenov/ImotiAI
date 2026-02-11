@@ -5,7 +5,7 @@ import hashlib
 import io
 from sqlalchemy import text
 from datetime import datetime, timezone
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from sqlalchemy import desc, exists, func, select
 from sqlalchemy.orm import Session, aliased
@@ -14,6 +14,7 @@ from .models import ExtractionItem, ExtractionRun, Listing
 from .schemas import (
     ExtractedItem,
     ExtractionIn,
+    ExtractionBatchOut,
     ExtractionListItem,
     ExtractionListOut,
     ExtractionOut,

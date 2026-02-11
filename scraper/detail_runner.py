@@ -454,7 +454,7 @@ async def scrape_one(
             return None
         # ---------------------------------------------------------------
 
-        return make_detail_payload(url, title, desc)
+        return make_detail_payload(url, title, desc, image, images)
     finally:
         try:
             await page.close()

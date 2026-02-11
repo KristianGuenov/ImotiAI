@@ -75,6 +75,7 @@ services:
       - ./data:/app/data
       # ✅ this is the important mount: repo-root file -> what runner reads
       - ./site_profiles.json:/app/site_profiles.json:ro
+      - ./scraper:/app/scraper
 
     depends_on:
       - api

@@ -1,0 +1,20 @@
+{
+  "domain": "www.mirela.bg",
+  "detected": {
+    "has_jsonld": false,
+    "has_state_blob": false,
+    "has_kv_pairs": true,
+    "kv_markup": "label_value",
+    "has_amenity_chips": null,
+    "has_contacts": true,
+    "has_price": true,
+    "gallery_type": "img_src",
+    "has_map_coords": true,
+    "primary_payload_source": "kv",
+    "kv_pair_count_avg": 42,
+    "text_length_avg": 3874,
+    "jsonld_block_count_avg": 0,
+    "state_blob_count_avg": 0
+  },
+  "sample_count": 3
+}

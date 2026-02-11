@@ -1,0 +1,20 @@
+{
+  "domain": "bazar.bg",
+  "detected": {
+    "has_jsonld": true,
+    "has_state_blob": false,
+    "has_kv_pairs": true,
+    "kv_markup": "table",
+    "has_amenity_chips": null,
+    "has_contacts": true,
+    "has_price": true,
+    "gallery_type": "img_src",
+    "has_map_coords": true,
+    "primary_payload_source": "mixed",
+    "kv_pair_count_avg": 3,
+    "text_length_avg": 6733,
+    "jsonld_block_count_avg": 4,
+    "state_blob_count_avg": 0
+  },
+  "sample_count": 3
+}

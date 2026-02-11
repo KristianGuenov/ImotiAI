@@ -1,0 +1,717 @@
+version: 1
+generated_at: '2026-02-11T12:55:45.052453+00:00'
+domains:
+- domain: address.bg
+  enabled: true
+  samples:
+  - url: https://address.bg/sofia-triagalnika-tristaen-apartament-offer671410
+    label: standard
+  - url: https://address.bg/priselci-parcel-teren-offer681601
+    label: rich_features
+  - url: https://address.bg/varna-vladislav-varnenchik-tristaen-apartament-offer681541
+    label: different_type_or_edge
+  detected:
+    has_jsonld: true
+    has_state_blob: false
+    has_kv_pairs: true
+    kv_markup: label_value
+    has_amenity_chips: null
+    has_contacts: true
+    has_price: true
+    gallery_type: img_src
+    has_map_coords: true
+    primary_payload_source: mixed
+    kv_pair_count_avg: 8
+    text_length_avg: 6617
+    jsonld_block_count_avg: 0
+    state_blob_count_avg: 0
+  classification:
+    template_family: null
+    confidence: null
+    notes: ''
+  extraction_plan:
+    priority: medium
+    next_actions:
+    - Ensure detail_rules include/exclude patterns are correct
+    - 'Enable raw harvester: jsonld + kv extraction'
+    - Add optional network json capture if SPA-backed
+- domain: arcoreal.bg
+  enabled: true
+  samples:
+  - url: https://arcoreal.bg/%D0%BE%D1%84%D0%B5%D1%80%D1%82%D0%B8/%D0%9F%D1%80%D0%BE%D0%B4%D0%B0%D0%B2%D0%B0-3-%D1%81%D1%82%D0%B0%D0%B5%D0%BD-%D0%90%D0%BF%D0%B0%D1%80%D1%82%D0%B0%D0%BC%D0%B5%D0%BD%D1%82-%D0%A1%D0%BE%D1%84%D0%B8%D1%8F-(%D0%B3%D1%80%D0%B0%D0%B4)--%D0%A0%D0%B5%D0%B4%D1%83%D1%82%D0%B0-90808
+    label: standard
+  - url: https://arcoreal.bg/%D0%BE%D1%84%D0%B5%D1%80%D1%82%D0%B8/%D0%9F%D1%80%D0%BE%D0%B4%D0%B0%D0%B2%D0%B0-3-%D1%81%D1%82%D0%B0%D0%B5%D0%BD-%D0%90%D0%BF%D0%B0%D1%80%D1%82%D0%B0%D0%BC%D0%B5%D0%BD%D1%82-%D0%A1%D0%BE%D1%84%D0%B8%D1%8F-(%D0%B3%D1%80%D0%B0%D0%B4)--%D0%9E%D0%B2%D1%87%D0%B0-%D0%BA%D1%83%D0%BF%D0%B5%D0%BB-90815
+    label: rich_features
+  - url: https://arcoreal.bg/%D0%BE%D1%84%D0%B5%D1%80%D1%82%D0%B8/%D0%9F%D1%80%D0%BE%D0%B4%D0%B0%D0%B2%D0%B0-4-%D1%81%D1%82%D0%B0%D0%B5%D0%BD-%D0%90%D0%BF%D0%B0%D1%80%D1%82%D0%B0%D0%BC%D0%B5%D0%BD%D1%82-%D0%A1%D0%BE%D1%84%D0%B8%D1%8F-(%D0%B3%D1%80%D0%B0%D0%B4)--%D0%9B%D0%BE%D0%B7%D0%B5%D0%BD%D0%B5%D1%86-90829
+    label: different_type_or_edge
+  detected:
+    has_jsonld: false
+    has_state_blob: false
+    has_kv_pairs: true
+    kv_markup: label_value
+    has_amenity_chips: null
+    has_contacts: true
+    has_price: true
+    gallery_type: background_image
+    has_map_coords: true
+    primary_payload_source: description_only
+    kv_pair_count_avg: 7
+    text_length_avg: 7714
+    jsonld_block_count_avg: 0
+    state_blob_count_avg: 0
+  classification:
+    template_family: null
+    confidence: null
+    notes: ''
+  extraction_plan:
+    priority: medium
+    next_actions:
+    - Ensure detail_rules include/exclude patterns are correct
+    - 'Enable raw harvester: jsonld + kv extraction'
+    - Add optional network json capture if SPA-backed
+- domain: bazar.bg
+  enabled: true
+  samples:
+  - url: https://bazar.bg/obiava-53018641/prodawa-2-staen-gr-sofiia-krastowa-wada
+    label: standard
+  - url: https://bazar.bg/obiava-52462879/prodawa-mezonet-gr-sofiia-boiana
+    label: rich_features
+  - url: https://bazar.bg/obiava-53152237/prodawa-2-staen-gr-sweti-wlas-oblast-burgas
+    label: different_type_or_edge
+  detected:
+    has_jsonld: true
+    has_state_blob: false
+    has_kv_pairs: true
+    kv_markup: table
+    has_amenity_chips: null
+    has_contacts: true
+    has_price: true
+    gallery_type: img_src
+    has_map_coords: true
+    primary_payload_source: mixed
+    kv_pair_count_avg: 3
+    text_length_avg: 6733
+    jsonld_block_count_avg: 4
+    state_blob_count_avg: 0
+  classification:
+    template_family: null
+    confidence: null
+    notes: ''
+  extraction_plan:
+    priority: medium
+    next_actions:
+    - Ensure detail_rules include/exclude patterns are correct
+    - 'Enable raw harvester: jsonld + kv extraction'
+    - Add optional network json capture if SPA-backed
+- domain: buildingbox.bg
+  enabled: true
+  samples:
+  - url: https://buildingbox.bg/properties/prodava-tristaen-s-akt-14-v-jk-karpuzicza/
+    label: standard
+  - url: https://buildingbox.bg/properties/chetiristaen-apartament-na-metri-ot-metrostancziya-lomsko-shose/
+    label: rich_features
+  - url: https://buildingbox.bg/properties/tristaen-apartament-dragalevczi/
+    label: different_type_or_edge
+  detected:
+    has_jsonld: true
+    has_state_blob: false
+    has_kv_pairs: true
+    kv_markup: label_value
+    has_amenity_chips: null
+    has_contacts: true
+    has_price: true
+    gallery_type: mixed
+    has_map_coords: true
+    primary_payload_source: mixed
+    kv_pair_count_avg: 28
+    text_length_avg: 4533
+    jsonld_block_count_avg: 1
+    state_blob_count_avg: 0
+  classification:
+    template_family: null
+    confidence: null
+    notes: ''
+  extraction_plan:
+    priority: medium
+    next_actions:
+    - Ensure detail_rules include/exclude patterns are correct
+    - 'Enable raw harvester: jsonld + kv extraction'
+    - Add optional network json capture if SPA-backed
+- domain: en.realestates.bg
+  enabled: true
+  samples:
+  - url: https://en.realestates.bg/10696809
+    label: standard
+  - url: https://en.realestates.bg/10835658
+    label: rich_features
+  - url: https://en.realestates.bg/10530841
+    label: different_type_or_edge
+  detected:
+    has_jsonld: false
+    has_state_blob: false
+    has_kv_pairs: true
+    kv_markup: table
+    has_amenity_chips: null
+    has_contacts: true
+    has_price: true
+    gallery_type: img_src
+    has_map_coords: true
+    primary_payload_source: kv
+    kv_pair_count_avg: 50
+    text_length_avg: 3275
+    jsonld_block_count_avg: 0
+    state_blob_count_avg: 0
+  classification:
+    template_family: null
+    confidence: null
+    notes: ''
+  extraction_plan:
+    priority: medium
+    next_actions:
+    - Ensure detail_rules include/exclude patterns are correct
+    - 'Enable raw harvester: jsonld + kv extraction'
+    - Add optional network json capture if SPA-backed
+- domain: imoteka.bg
+  enabled: true
+  samples:
+  - url: https://imoteka.bg/sofiya-manastirski-livadi-iztok-tristaen-apartament-offer655735
+    label: standard
+  - url: https://imoteka.bg/sofiya-lyulin-4-tristaen-apartament-offer655736
+    label: rich_features
+  - url: https://imoteka.bg/varna-gradska-4-tristaen-apartament-offer655737
+    label: different_type_or_edge
+  detected:
+    has_jsonld: true
+    has_state_blob: false
+    has_kv_pairs: true
+    kv_markup: label_value
+    has_amenity_chips: null
+    has_contacts: true
+    has_price: true
+    gallery_type: img_src
+    has_map_coords: true
+    primary_payload_source: mixed
+    kv_pair_count_avg: 5
+    text_length_avg: 5814
+    jsonld_block_count_avg: 2
+    state_blob_count_avg: 0
+  classification:
+    template_family: null
+    confidence: null
+    notes: ''
+  extraction_plan:
+    priority: medium
+    next_actions:
+    - Ensure detail_rules include/exclude patterns are correct
+    - 'Enable raw harvester: jsonld + kv extraction'
+    - Add optional network json capture if SPA-backed
+- domain: imoti.info
+  enabled: true
+  samples:
+  - url: https://imoti.info/obiava/45063398-prodava-2-staen-grad-stara-zagora-centur
+    label: standard
+  - url: https://imoti.info/obiava/10673647-prodava-kusha-oblast-plovdiv-gr-brezovo
+    label: rich_features
+  - url: https://imoti.info/obiava/13321007-prodava-4-staen-grad-stara-zagora-ayazmoto
+    label: different_type_or_edge
+  detected:
+    has_jsonld: true
+    has_state_blob: false
+    has_kv_pairs: true
+    kv_markup: label_value
+    has_amenity_chips: null
+    has_contacts: true
+    has_price: true
+    gallery_type: background_image
+    has_map_coords: true
+    primary_payload_source: mixed
+    kv_pair_count_avg: 6
+    text_length_avg: 4546
+    jsonld_block_count_avg: 3
+    state_blob_count_avg: 0
+  classification:
+    template_family: null
+    confidence: null
+    notes: ''
+  extraction_plan:
+    priority: medium
+    next_actions:
+    - Ensure detail_rules include/exclude patterns are correct
+    - 'Enable raw harvester: jsonld + kv extraction'
+    - Add optional network json capture if SPA-backed
+- domain: realistimo.com
+  enabled: true
+  samples:
+  - url: https://realistimo.com/bg/buy/offer-bd9679bd-44bd-4e37-a547-f593f0160d08/
+    label: standard
+  - url: https://realistimo.com/bg/buy/offer-53ea7360-8a8d-41aa-a2b9-6472daa8196e/
+    label: rich_features
+  - url: https://realistimo.com/bg/buy/offer-af90796b-6720-490d-9ba0-6cc9bffd34b4/
+    label: different_type_or_edge
+  detected:
+    has_jsonld: false
+    has_state_blob: false
+    has_kv_pairs: true
+    kv_markup: label_value
+    has_amenity_chips: null
+    has_contacts: false
+    has_price: false
+    gallery_type: mixed
+    has_map_coords: true
+    primary_payload_source: description_only
+    kv_pair_count_avg: 4
+    text_length_avg: 1567
+    jsonld_block_count_avg: 1
+    state_blob_count_avg: 0
+  classification:
+    template_family: null
+    confidence: null
+    notes: ''
+  extraction_plan:
+    priority: medium
+    next_actions:
+    - Ensure detail_rules include/exclude patterns are correct
+    - 'Enable raw harvester: jsonld + kv extraction'
+    - Add optional network json capture if SPA-backed
+- domain: ues.bg
+  enabled: true
+  samples:
+  - url: https://ues.bg/bg/bgr/sofia-downtown/mnogostaen-apartament-26727
+    label: standard
+  - url: https://ues.bg/bg/bgr/sofia-lozenets/penthouse-28631
+    label: rich_features
+  - url: https://ues.bg/bg/bgr/sofia-malinova-dolina-area/tristaen-apartament-28622
+    label: different_type_or_edge
+  detected:
+    has_jsonld: true
+    has_state_blob: false
+    has_kv_pairs: true
+    kv_markup: label_value
+    has_amenity_chips: null
+    has_contacts: true
+    has_price: true
+    gallery_type: mixed
+    has_map_coords: true
+    primary_payload_source: mixed
+    kv_pair_count_avg: 42
+    text_length_avg: 9920
+    jsonld_block_count_avg: 8
+    state_blob_count_avg: 0
+  classification:
+    template_family: null
+    confidence: null
+    notes: ''
+  extraction_plan:
+    priority: medium
+    next_actions:
+    - Ensure detail_rules include/exclude patterns are correct
+    - 'Enable raw harvester: jsonld + kv extraction'
+    - Add optional network json capture if SPA-backed
+- domain: www.domaza.bg
+  enabled: true
+  samples:
+  - url: https://www.domaza.bg/%D0%BD%D0%B5%D0%B4%D0%B2%D0%B8%D0%B6%D0%B8%D0%BC%D0%B8_%D0%B8%D0%BC%D0%BE%D1%82%D0%B8_%D0%B1%D1%8A%D0%BB%D0%B3%D0%B0%D1%80%D0%B8%D1%8F-16-0-36-0-0-0-sl/
+    label: standard
+  - url: https://www.domaza.bg/%D0%BA%D1%8A%D1%89%D0%B0_%D0%B3%D0%BE%D1%80%D1%83%D0%B1%D0%BB%D1%8F%D0%BD%D0%B5_%D1%81%D0%BE%D1%84%D0%B8%D1%8F_%D1%81%D0%BE%D1%84%D0%B8%D1%8F_%D0%B1%D1%8A%D0%BB%D0%B3%D0%B0%D1%80%D0%B8%D1%8F-16-8122577-p/
+    label: rich_features
+  - url: https://www.domaza.bg/%D0%B6%D0%B8%D0%BB%D0%B8%D1%89%D0%B5%D0%BD_%D0%BA%D0%BE%D0%BC%D0%BF%D0%BB%D0%B5%D0%BA%D1%81_%D0%BA%D1%80%D1%8A%D1%81%D1%82%D0%BE%D0%B2%D0%B0_%D0%B2%D0%B0%D0%B4%D0%B0_%D1%81%D0%BE%D1%84%D0%B8%D1%8F_%D1%81%D0%BE%D1%84%D0%B8%D1%8F_%D0%B1%D1%8A%D0%BB%D0%B3%D0%B0%D1%80%D0%B8%D1%8F-16-6245586-p/
+    label: different_type_or_edge
+  detected:
+    has_jsonld: true
+    has_state_blob: false
+    has_kv_pairs: true
+    kv_markup: table
+    has_amenity_chips: null
+    has_contacts: true
+    has_price: true
+    gallery_type: img_src
+    has_map_coords: true
+    primary_payload_source: mixed
+    kv_pair_count_avg: 0
+    text_length_avg: 7913
+    jsonld_block_count_avg: 7
+    state_blob_count_avg: 0
+  classification:
+    template_family: null
+    confidence: null
+    notes: ''
+  extraction_plan:
+    priority: medium
+    next_actions:
+    - Ensure detail_rules include/exclude patterns are correct
+    - 'Enable raw harvester: jsonld + kv extraction'
+    - Add optional network json capture if SPA-backed
+- domain: www.era.bg
+  enabled: true
+  samples:
+  - url: https://www.era.bg/properties/sell/apartment/twobedroom/18490/dvustaen-apartament-v-nov-zhilishten-kompleks-v-grelin-pelin-4301014
+    label: standard
+  - url: https://www.era.bg/properties/sell/apartment/threebedroom/sofia/dst-00568/era-favorit-prodava-tristaen-apartament-v-sgrada-novo-stroitelstvo-v-lyulin-8-7200390
+    label: rich_features
+  - url: https://www.era.bg/properties/sell/apartment/threebedroom/sofia/dst-00568/era-favorit-prodava-tristaen-apartament-v-sgrada-novo-stroitelstvo-v-lyulin-8-7200386
+    label: different_type_or_edge
+  detected:
+    has_jsonld: true
+    has_state_blob: false
+    has_kv_pairs: false
+    kv_markup: none
+    has_amenity_chips: null
+    has_contacts: false
+    has_price: false
+    gallery_type: background_image
+    has_map_coords: false
+    primary_payload_source: description_only
+    kv_pair_count_avg: 0
+    text_length_avg: 1272
+    jsonld_block_count_avg: 2
+    state_blob_count_avg: 0
+  classification:
+    template_family: null
+    confidence: null
+    notes: ''
+  extraction_plan:
+    priority: medium
+    next_actions:
+    - Ensure detail_rules include/exclude patterns are correct
+    - 'Enable raw harvester: jsonld + kv extraction'
+    - Add optional network json capture if SPA-backed
+- domain: www.holmes.bg
+  enabled: true
+  samples:
+  - url: https://www.holmes.bg/obiava/15573714/prodava-partsel-oblast-sofiya-gara-bov
+    label: standard
+  - url: https://www.holmes.bg/obiava/68902663/prodava-2-staen-grad-plovdiv-trakiya
+    label: rich_features
+  - url: https://www.holmes.bg/obiava/46235642/prodava-1-staen-grad-varna-k-k-zlatni-pyasatsi
+    label: different_type_or_edge
+  detected:
+    has_jsonld: true
+    has_state_blob: false
+    has_kv_pairs: true
+    kv_markup: label_value
+    has_amenity_chips: null
+    has_contacts: true
+    has_price: true
+    gallery_type: img_src
+    has_map_coords: true
+    primary_payload_source: mixed
+    kv_pair_count_avg: 6
+    text_length_avg: 2248
+    jsonld_block_count_avg: 3
+    state_blob_count_avg: 0
+  classification:
+    template_family: null
+    confidence: null
+    notes: ''
+  extraction_plan:
+    priority: medium
+    next_actions:
+    - Ensure detail_rules include/exclude patterns are correct
+    - 'Enable raw harvester: jsonld + kv extraction'
+    - Add optional network json capture if SPA-backed
+- domain: www.homes.bg
+  enabled: true
+  samples:
+  - url: https://www.homes.bg/offer/apartament-za-prodazhba/dvustaen-85m2-plovdiv-kv.-kyrshiyaka/as1670965
+    label: standard
+  - url: https://www.homes.bg/offer/apartament-za-prodazhba/dvustaen-75m2-plovdiv-kv.-ostromila/as1670966
+    label: rich_features
+  - url: https://www.homes.bg/offer/apartament-za-prodazhba/ednostaen-55m2-varna-okryzhna-bolnica/as1670968
+    label: different_type_or_edge
+  detected:
+    has_jsonld: false
+    has_state_blob: false
+    has_kv_pairs: true
+    kv_markup: table
+    has_amenity_chips: null
+    has_contacts: true
+    has_price: true
+    gallery_type: img_src
+    has_map_coords: true
+    primary_payload_source: kv
+    kv_pair_count_avg: 16
+    text_length_avg: 1222
+    jsonld_block_count_avg: 0
+    state_blob_count_avg: 0
+  classification:
+    template_family: null
+    confidence: null
+    notes: ''
+  extraction_plan:
+    priority: medium
+    next_actions:
+    - Ensure detail_rules include/exclude patterns are correct
+    - 'Enable raw harvester: jsonld + kv extraction'
+    - Add optional network json capture if SPA-backed
+- domain: www.imot.bg
+  enabled: true
+  samples:
+  - url: https://www.imot.bg/obiava-1b176337343691544-prodava-dvustaen-apartament-grad-sofiya-banishora
+    label: standard
+  - url: https://www.imot.bg/obiava-1b175602620734432-prodava-dvustaen-apartament-grad-sofiya-banishora
+    label: rich_features
+  - url: https://www.imot.bg/obiava-1c175887000205803-prodava-tristaen-apartament-grad-sofiya-banishora
+    label: different_type_or_edge
+  detected:
+    has_jsonld: false
+    has_state_blob: false
+    has_kv_pairs: true
+    kv_markup: label_value
+    has_amenity_chips: null
+    has_contacts: true
+    has_price: true
+    gallery_type: mixed
+    has_map_coords: true
+    primary_payload_source: kv
+    kv_pair_count_avg: 10
+    text_length_avg: 5306
+    jsonld_block_count_avg: 0
+    state_blob_count_avg: 0
+  classification:
+    template_family: null
+    confidence: null
+    notes: ''
+  extraction_plan:
+    priority: medium
+    next_actions:
+    - Ensure detail_rules include/exclude patterns are correct
+    - 'Enable raw harvester: jsonld + kv extraction'
+    - Add optional network json capture if SPA-backed
+- domain: www.imoti.com
+  enabled: true
+  samples:
+  - url: https://www.imoti.com/obiava/85903286/prodava-2-staen-grad-sofiya-banishora
+    label: standard
+  - url: https://www.imoti.com/obiava/67747549/prodava-2-staen-grad-sofiya-banishora
+    label: rich_features
+  - url: https://www.imoti.com/obiava/79523634/prodava-2-staen-grad-sofiya-banishora
+    label: different_type_or_edge
+  detected:
+    has_jsonld: true
+    has_state_blob: true
+    has_kv_pairs: true
+    kv_markup: label_value
+    has_amenity_chips: null
+    has_contacts: true
+    has_price: true
+    gallery_type: img_src
+    has_map_coords: true
+    primary_payload_source: mixed
+    kv_pair_count_avg: 14
+    text_length_avg: 5368
+    jsonld_block_count_avg: 4
+    state_blob_count_avg: 0
+  classification:
+    template_family: null
+    confidence: null
+    notes: ''
+  extraction_plan:
+    priority: medium
+    next_actions:
+    - Ensure detail_rules include/exclude patterns are correct
+    - 'Enable raw harvester: jsonld + kv extraction'
+    - Add optional network json capture if SPA-backed
+- domain: www.imoti.net
+  enabled: true
+  samples:
+  - url: https://www.imoti.net/bg/obiava/prodava/sofia/suha-reka/dvustaen/6177556/?sid=hSrJhL&page=1
+    label: standard
+  - url: https://www.imoti.net/bg/obiava/prodava/sofia/ndk/magazin/1426481/?sid=hSrJhL&page=1
+    label: rich_features
+  - url: https://www.imoti.net/bg/obiava/prodava--v-stroej/sofia/vitosha/dvustaen/6117958/?sid=hSrJhL&page=1
+    label: different_type_or_edge
+  detected:
+    has_jsonld: false
+    has_state_blob: false
+    has_kv_pairs: true
+    kv_markup: table
+    has_amenity_chips: null
+    has_contacts: true
+    has_price: true
+    gallery_type: img_src
+    has_map_coords: true
+    primary_payload_source: kv
+    kv_pair_count_avg: 122
+    text_length_avg: 7335
+    jsonld_block_count_avg: 0
+    state_blob_count_avg: 0
+  classification:
+    template_family: null
+    confidence: null
+    notes: ''
+  extraction_plan:
+    priority: medium
+    next_actions:
+    - Ensure detail_rules include/exclude patterns are correct
+    - 'Enable raw harvester: jsonld + kv extraction'
+    - Add optional network json capture if SPA-backed
+- domain: www.luximmo.com
+  enabled: true
+  samples:
+  - url: https://www.luximmo.com/bulgaria/region-sofia/sofia/luxury-properties-large-apartments/luxury-property-37942-large-apartment-for-sale-in-sofia.html
+    label: standard
+  - url: https://www.luximmo.com/bulgaria/region-sofia/borovets/luxury-properties-3-bedroom-apartments/luxury-property-40085-3-bedroom-apartment-for-sale-in-borovets.html
+    label: rich_features
+  - url: https://www.luximmo.com/bulgaria/region-sofia/sofia/luxury-properties-houses/luxury-property-43913-house-for-sale-in-sofia.html
+    label: different_type_or_edge
+  detected:
+    has_jsonld: true
+    has_state_blob: false
+    has_kv_pairs: true
+    kv_markup: label_value
+    has_amenity_chips: null
+    has_contacts: true
+    has_price: true
+    gallery_type: img_src
+    has_map_coords: true
+    primary_payload_source: mixed
+    kv_pair_count_avg: 26
+    text_length_avg: 11804
+    jsonld_block_count_avg: 3
+    state_blob_count_avg: 0
+  classification:
+    template_family: null
+    confidence: null
+    notes: ''
+  extraction_plan:
+    priority: medium
+    next_actions:
+    - Ensure detail_rules include/exclude patterns are correct
+    - 'Enable raw harvester: jsonld + kv extraction'
+    - Add optional network json capture if SPA-backed
+- domain: www.mirela.bg
+  enabled: true
+  samples:
+  - url: https://www.mirela.bg/imoti/%D0%A3%D1%8E%D1%82%D0%B5%D0%BD-%D0%B5%D0%B4%D0%BD%D0%BE%D1%81%D1%82%D0%B0%D0%B5%D0%BD-%D0%B0%D0%BF%D0%B0%D1%80%D1%82%D0%B0%D0%BC%D0%B5%D0%BD%D1%82-%D0%B2-%D0%BA%D0%BE%D0%BC%D0%BF%D0%BB%D0%B5%D0%BA%D1%81-%D0%90%D1%84%D1%80%D0%BE%D0%B4%D0%B8%D1%82%D0%B0-%D0%9F%D0%B0%D0%BB%D0%B0%D1%81-%D0%BA-%D0%BA-%D0%A1%D0%BB%D1%8A%D0%BD%D1%87%D0%B5%D0%B2-%D0%B1%D1%80%D1%8F%D0%B3-offer458979.html
+    label: standard
+  - url: https://www.mirela.bg/imoti/%D0%94%D0%B2%D1%83%D1%81%D1%82%D0%B0%D0%B5%D0%BD-%D0%B0%D0%BF%D0%B0%D1%80%D1%82%D0%B0%D0%BC%D0%B5%D0%BD%D1%82-%D0%BA-%D1%81-%D0%A1%D1%8A%D0%BD%D0%B8-%D0%92%D1%8E-%D0%A1%D0%B0%D1%83%D1%82-%D0%BA-%D0%BA-%D0%A1%D0%BB%D1%8A%D0%BD%D1%87%D0%B5%D0%B2-%D0%B1%D1%80%D1%8F%D0%B3-51-%D0%BA%D0%B2-%D0%BC-offer458002.html
+    label: rich_features
+  - url: https://www.mirela.bg/imoti/%D0%93%D0%B0%D1%80%D1%81%D0%BE%D0%BD%D0%B8%D0%B5%D1%80%D0%B0-%D0%BF%D0%BE%D0%B4%D1%85%D0%BE%D0%B4%D1%8F%D1%89%D0%B0-%D0%B7%D0%B0-%D0%BF%D1%80%D0%B5%D1%83%D1%81%D1%82%D1%80%D0%BE%D0%B9%D1%81%D1%82%D0%B2%D0%BE-%D0%B2-%D0%BA%D0%B2-%D0%93%D0%B5%D0%BE-%D0%9C%D0%B8%D0%BB%D0%B5%D0%B2-%D0%A1%D0%BB%D0%B0%D1%82%D0%B8%D0%BD%D0%B0-offer458023.html
+    label: different_type_or_edge
+  detected:
+    has_jsonld: false
+    has_state_blob: false
+    has_kv_pairs: true
+    kv_markup: label_value
+    has_amenity_chips: null
+    has_contacts: true
+    has_price: true
+    gallery_type: img_src
+    has_map_coords: true
+    primary_payload_source: kv
+    kv_pair_count_avg: 42
+    text_length_avg: 3874
+    jsonld_block_count_avg: 0
+    state_blob_count_avg: 0
+  classification:
+    template_family: null
+    confidence: null
+    notes: ''
+  extraction_plan:
+    priority: medium
+    next_actions:
+    - Ensure detail_rules include/exclude patterns are correct
+    - 'Enable raw harvester: jsonld + kv extraction'
+    - Add optional network json capture if SPA-backed
+- domain: www.property.bg
+  enabled: true
+  samples:
+  - url: https://www.property.bg/property-132154-south-facing-one-bedroom-apartment-with-separate-kitchen-in-a-quiet-and-green-area/
+    label: standard
+  - url: https://www.property.bg/property-133172-two-bedroom-apartment-in-a-luxury-building-next-to-a-pine-forest-in-pancharevo/
+    label: rich_features
+  - url: https://www.property.bg/property-118352-a-modern-house-in-a-new-generation-complex-in-the-capital/
+    label: different_type_or_edge
+  detected:
+    has_jsonld: true
+    has_state_blob: false
+    has_kv_pairs: true
+    kv_markup: label_value
+    has_amenity_chips: null
+    has_contacts: true
+    has_price: true
+    gallery_type: img_src
+    has_map_coords: true
+    primary_payload_source: mixed
+    kv_pair_count_avg: 5
+    text_length_avg: 10251
+    jsonld_block_count_avg: 2
+    state_blob_count_avg: 0
+  classification:
+    template_family: null
+    confidence: null
+    notes: ''
+  extraction_plan:
+    priority: medium
+    next_actions:
+    - Ensure detail_rules include/exclude patterns are correct
+    - 'Enable raw harvester: jsonld + kv extraction'
+    - Add optional network json capture if SPA-backed
+- domain: www.suprimmo.bg
+  enabled: true
+  samples:
+  - url: https://www.suprimmo.bg/imot-137484-prostoren-tristaen-apartament-v-tsentara-blizo-do-ndk-i-bul-vitosha/
+    label: standard
+  - url: https://www.suprimmo.bg/imot-137463-tristaen-apartament-za-prodajba-vav-visokotehnologichna-sgrada-do-bul-tsarigradsko-shose/
+    label: rich_features
+  - url: https://www.suprimmo.bg/imot-21143-imot-s-unikalna-lokatsiya-i-gledka-kam-tsarevets-i-trapezitsa/
+    label: different_type_or_edge
+  detected:
+    has_jsonld: true
+    has_state_blob: false
+    has_kv_pairs: true
+    kv_markup: label_value
+    has_amenity_chips: null
+    has_contacts: true
+    has_price: true
+    gallery_type: img_src
+    has_map_coords: true
+    primary_payload_source: mixed
+    kv_pair_count_avg: 8
+    text_length_avg: 12099
+    jsonld_block_count_avg: 3
+    state_blob_count_avg: 0
+  classification:
+    template_family: null
+    confidence: null
+    notes: ''
+  extraction_plan:
+    priority: medium
+    next_actions:
+    - Ensure detail_rules include/exclude patterns are correct
+    - 'Enable raw harvester: jsonld + kv extraction'
+    - Add optional network json capture if SPA-backed
+- domain: yavlena.com
+  enabled: true
+  samples:
+  - url: https://yavlena.com/bg/153837
+    label: standard
+  - url: https://yavlena.com/bg/160790
+    label: rich_features
+  - url: https://yavlena.com/bg/88804
+    label: different_type_or_edge
+  detected:
+    has_jsonld: false
+    has_state_blob: false
+    has_kv_pairs: true
+    kv_markup: label_value
+    has_amenity_chips: null
+    has_contacts: true
+    has_price: true
+    gallery_type: img_src
+    has_map_coords: true
+    primary_payload_source: kv
+    kv_pair_count_avg: 17
+    text_length_avg: 4093
+    jsonld_block_count_avg: 0
+    state_blob_count_avg: 0
+  classification:
+    template_family: null
+    confidence: null
+    notes: ''
+  extraction_plan:
+    priority: medium
+    next_actions:
+    - Ensure detail_rules include/exclude patterns are correct
+    - 'Enable raw harvester: jsonld + kv extraction'
+    - Add optional network json capture if SPA-backed
