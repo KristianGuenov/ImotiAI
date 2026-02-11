@@ -72,7 +72,7 @@ services:
 
       # Realistimo persistent browser profile (created on host)
       - ./data/realistimo-profile:/data/realistimo-profile
-
+      - ./data:/app/data
       # ✅ this is the important mount: repo-root file -> what runner reads
       - ./site_profiles.json:/app/site_profiles.json:ro
 

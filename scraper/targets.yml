@@ -1,3 +1,23 @@
+- name: homes_bg_sale
+  url: "https://www.homes.bg/?currencyId=1&filterOrderBy=0&locationId=0&typeId=ApartmentSell"
+  mode: load_more_then_extract
+  max_pages: 1
+  post_strategy: per_target
+  post_batch_pages: 1
+  load_more:
+    preferPattern: /offer/
+    forceScrollOnly: true
+    scrollSteps: 25000
+    maxActions: 25000
+    idleCycles: 60
+    initialWaitMs: 12000
+    stepDelayMs: 900
+    waitAfterClickMs: 9000
+    scrollStepFactor: 0.85
+    scrollMinStepPx: 450
+    forceWindowScroll: false
+
+
 - name: yavlena_com_sale2
   url: "https://yavlena.com/bg/sales/varna-varna/d3l651?sort=4"
   mode: load_more_then_extract

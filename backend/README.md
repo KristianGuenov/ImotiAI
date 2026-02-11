@@ -57,26 +57,27 @@ realestates.bg - OK
 property.bg - OK
 imoti.com - OK
 Unique Estates - OK
-
-Scroll
-
-Yavlena  - infinite scroll 
-homes.bg - infinite scroll
-
-
-
+Yavlena  - OK
+homes.bg - OK
 
 
 Later - buggy
-era.bg
-Realistimo
-Homes2u.bg
-Imoteka.bg - leave for now
-dskhome
-BulgarianProperties.bg
+era.bg - 4000 listings
+Realistimo - 7000 listings Sofia
+Homes2u.bg - 3920 buildinga
+Imoteka.bg - 11300 listings
+dskhome - 55000 listings
+BulgarianProperties.bg - 3700 listings
 
 
 
 
-
+This is the command to run the pager for homes.bg
+docker compose --profile scrape run --rm \
+  -e DATABASE_URL='%URL' \
+  scraper \
+  python /app/scraper/homes_api_pager.py \
+    --partitions /app/data/homes_partitions.txt \
+    --db \
+    --db-table extraction_items
 
