@@ -1,5 +1,5 @@
 version: 1
-generated_at: '2026-02-11T12:55:45.052453+00:00'
+generated_at: '2026-02-11T13:18:14.123777+00:00'
 domains:
 - domain: address.bg
   enabled: true
@@ -26,8 +26,8 @@ domains:
     jsonld_block_count_avg: 0
     state_blob_count_avg: 0
   classification:
-    template_family: null
-    confidence: null
+    template_family: structured_jsonld
+    confidence: medium
     notes: ''
   extraction_plan:
     priority: medium
@@ -60,8 +60,8 @@ domains:
     jsonld_block_count_avg: 0
     state_blob_count_avg: 0
   classification:
-    template_family: null
-    confidence: null
+    template_family: kv_table_light
+    confidence: medium
     notes: ''
   extraction_plan:
     priority: medium
@@ -94,8 +94,8 @@ domains:
     jsonld_block_count_avg: 4
     state_blob_count_avg: 0
   classification:
-    template_family: null
-    confidence: null
+    template_family: structured_jsonld
+    confidence: medium
     notes: ''
   extraction_plan:
     priority: medium
@@ -128,8 +128,8 @@ domains:
     jsonld_block_count_avg: 1
     state_blob_count_avg: 0
   classification:
-    template_family: null
-    confidence: null
+    template_family: kv_table_heavy
+    confidence: medium
     notes: ''
   extraction_plan:
     priority: medium
@@ -162,8 +162,8 @@ domains:
     jsonld_block_count_avg: 0
     state_blob_count_avg: 0
   classification:
-    template_family: null
-    confidence: null
+    template_family: kv_table_heavy
+    confidence: high
     notes: ''
   extraction_plan:
     priority: medium
@@ -196,8 +196,8 @@ domains:
     jsonld_block_count_avg: 2
     state_blob_count_avg: 0
   classification:
-    template_family: null
-    confidence: null
+    template_family: structured_jsonld
+    confidence: medium
     notes: ''
   extraction_plan:
     priority: medium
@@ -230,8 +230,8 @@ domains:
     jsonld_block_count_avg: 3
     state_blob_count_avg: 0
   classification:
-    template_family: null
-    confidence: null
+    template_family: structured_jsonld
+    confidence: medium
     notes: ''
   extraction_plan:
     priority: medium
@@ -264,8 +264,8 @@ domains:
     jsonld_block_count_avg: 1
     state_blob_count_avg: 0
   classification:
-    template_family: null
-    confidence: null
+    template_family: kv_table_light
+    confidence: medium
     notes: ''
   extraction_plan:
     priority: medium
@@ -298,8 +298,8 @@ domains:
     jsonld_block_count_avg: 8
     state_blob_count_avg: 0
   classification:
-    template_family: null
-    confidence: null
+    template_family: kv_table_heavy
+    confidence: medium
     notes: ''
   extraction_plan:
     priority: medium
@@ -332,8 +332,8 @@ domains:
     jsonld_block_count_avg: 7
     state_blob_count_avg: 0
   classification:
-    template_family: null
-    confidence: null
+    template_family: structured_jsonld
+    confidence: medium
     notes: ''
   extraction_plan:
     priority: medium
@@ -366,8 +366,8 @@ domains:
     jsonld_block_count_avg: 2
     state_blob_count_avg: 0
   classification:
-    template_family: null
-    confidence: null
+    template_family: structured_jsonld
+    confidence: medium
     notes: ''
   extraction_plan:
     priority: medium
@@ -400,8 +400,8 @@ domains:
     jsonld_block_count_avg: 3
     state_blob_count_avg: 0
   classification:
-    template_family: null
-    confidence: null
+    template_family: structured_jsonld
+    confidence: medium
     notes: ''
   extraction_plan:
     priority: medium
@@ -434,8 +434,8 @@ domains:
     jsonld_block_count_avg: 0
     state_blob_count_avg: 0
   classification:
-    template_family: null
-    confidence: null
+    template_family: kv_table_heavy
+    confidence: high
     notes: ''
   extraction_plan:
     priority: medium
@@ -468,8 +468,8 @@ domains:
     jsonld_block_count_avg: 0
     state_blob_count_avg: 0
   classification:
-    template_family: null
-    confidence: null
+    template_family: kv_table_heavy
+    confidence: high
     notes: ''
   extraction_plan:
     priority: medium
@@ -502,8 +502,8 @@ domains:
     jsonld_block_count_avg: 4
     state_blob_count_avg: 0
   classification:
-    template_family: null
-    confidence: null
+    template_family: api_backed_spa
+    confidence: high
     notes: ''
   extraction_plan:
     priority: medium
@@ -536,8 +536,8 @@ domains:
     jsonld_block_count_avg: 0
     state_blob_count_avg: 0
   classification:
-    template_family: null
-    confidence: null
+    template_family: kv_table_heavy
+    confidence: high
     notes: ''
   extraction_plan:
     priority: medium
@@ -570,8 +570,8 @@ domains:
     jsonld_block_count_avg: 3
     state_blob_count_avg: 0
   classification:
-    template_family: null
-    confidence: null
+    template_family: kv_table_heavy
+    confidence: medium
     notes: ''
   extraction_plan:
     priority: medium
@@ -604,8 +604,8 @@ domains:
     jsonld_block_count_avg: 0
     state_blob_count_avg: 0
   classification:
-    template_family: null
-    confidence: null
+    template_family: kv_table_heavy
+    confidence: high
     notes: ''
   extraction_plan:
     priority: medium
@@ -638,8 +638,8 @@ domains:
     jsonld_block_count_avg: 2
     state_blob_count_avg: 0
   classification:
-    template_family: null
-    confidence: null
+    template_family: structured_jsonld
+    confidence: medium
     notes: ''
   extraction_plan:
     priority: medium
@@ -672,8 +672,8 @@ domains:
     jsonld_block_count_avg: 3
     state_blob_count_avg: 0
   classification:
-    template_family: null
-    confidence: null
+    template_family: structured_jsonld
+    confidence: medium
     notes: ''
   extraction_plan:
     priority: medium
@@ -706,8 +706,8 @@ domains:
     jsonld_block_count_avg: 0
     state_blob_count_avg: 0
   classification:
-    template_family: null
-    confidence: null
+    template_family: kv_table_heavy
+    confidence: high
     notes: ''
   extraction_plan:
     priority: medium

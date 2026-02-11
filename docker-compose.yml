@@ -67,7 +67,7 @@ services:
     volumes:
       - ./scraper/targets.yml:/app/targets.yml:ro
       - ./extension/content.js:/app/content.js:ro
-      - ./scraper/detail_rules.yml:/app/scraper/detail_rules.yml:ro
+      - ./scraper/detail_rules.yml:/app/scraper/detail_rules.yml
       - ./scraper/detail_extractor.js:/app/scraper/detail_extractor.js:ro
 
       # Realistimo persistent browser profile (created on host)
