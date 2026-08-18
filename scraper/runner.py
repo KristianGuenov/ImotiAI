@@ -27,6 +27,16 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def canonical_domain(url: str) -> str:
+    try:
+        host = (urlsplit(url).hostname or "").lower().strip()
+        if host.startswith("www."):
+            host = host[4:]
+        return host
+    except Exception:
+        return ""
+
+
 @dataclass
 class ScrapeTarget:
     """One target to scrape."""
@@ -98,16 +108,90 @@ class TargetsLoader:
 
 class ApiClient:
     def __init__(self, endpoint: str, api_key: str):
-        self.endpoint = endpoint
+        self.endpoint = endpoint.rstrip("/")
         self.api_key = api_key
         self._client = httpx.AsyncClient(timeout=60.0)
+        self._cycle_by_domain: Dict[str, int] = {}
+
+        # Normal endpoint is .../api/v1/extractions. Keep backwards compatibility
+        # with that env var and derive the inventory-cycle endpoint from it.
+        marker = "/extractions"
+        if marker in self.endpoint:
+            self.api_base = self.endpoint.rsplit(marker, 1)[0]
+        else:
+            self.api_base = self.endpoint.rsplit("/", 1)[0]
 
     async def close(self):
         await self._client.aclose()
 
+    def _headers(self) -> Dict[str, str]:
+        return {"X-API-Key": self.api_key} if self.api_key else {}
+
+    def set_inventory_cycle(self, domain: str, cycle_id: Optional[int]) -> None:
+        d = (domain or "").lower().strip()
+        if not d:
+            return
+        if cycle_id is None:
+            self._cycle_by_domain.pop(d, None)
+        else:
+            self._cycle_by_domain[d] = int(cycle_id)
+
+    async def start_inventory_cycle(
+        self, domain: str, targets_expected: int
+    ) -> Dict[str, Any]:
+        url = f"{self.api_base}/inventory-cycles/start"
+        payload = {
+            "domain": domain,
+            "targetsExpected": int(targets_expected),
+            "meta": {"runnerStartedAt": utc_now_iso()},
+        }
+        r = await self._client.post(url, headers=self._headers(), json=payload)
+        r.raise_for_status()
+        data = r.json()
+        cycle_id = int(data["id"])
+        self.set_inventory_cycle(domain, cycle_id)
+        return data
+
+    async def complete_inventory_cycle(
+        self,
+        domain: str,
+        cycle_id: int,
+        *,
+        success: bool,
+        targets_succeeded: int,
+        targets_failed: int,
+        abort_reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        url = f"{self.api_base}/inventory-cycles/{int(cycle_id)}/complete"
+        meta: Dict[str, Any] = {"runnerCompletedAt": utc_now_iso()}
+        if abort_reason:
+            meta["abortReason"] = str(abort_reason)
+
+        payload = {
+            "success": bool(success),
+            "targetsSucceeded": int(targets_succeeded),
+            "targetsFailed": int(targets_failed),
+            "meta": meta,
+        }
+        r = await self._client.post(url, headers=self._headers(), json=payload)
+        r.raise_for_status()
+        data = r.json()
+        self.set_inventory_cycle(domain, None)
+        return data
+
     async def post_extraction(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        headers = {"X-API-Key": self.api_key} if self.api_key else {}
-        r = await self._client.post(self.endpoint, headers=headers, json=payload)
+        # Attach the domain cycle centrally so scrape modes do not need individual
+        # changes at every POST call site.
+        source_url = str(payload.get("sourceUrl") or "")
+        domain = canonical_domain(source_url)
+        cycle_id = self._cycle_by_domain.get(domain)
+        if cycle_id is not None:
+            meta = dict(payload.get("meta") or {})
+            meta["inventoryCycleId"] = cycle_id
+            payload = dict(payload)
+            payload["meta"] = meta
+
+        r = await self._client.post(self.endpoint, headers=self._headers(), json=payload)
         r.raise_for_status()
         try:
             return r.json()
@@ -837,8 +921,9 @@ class PlaywrightExtractor:
             if self._is_imotiinfo(page.url or "") and "/choose/" in (page.url or ""):
                 ok = await self._ensure_imotiinfo_not_choose(page, target.timeout_ms)
                 if not ok:
-                    print(f"[{target.name}] STOP imotiinfo_choose_gate url={page.url}")
-                    return 1, 0, None
+                    raise RuntimeError(
+                        f"incomplete_target: imotiinfo_choose_gate url={page.url}"
+                    )
 
             if target.mode == "extract_once":
                 payload = await self._extract(page)
@@ -1058,7 +1143,9 @@ class PlaywrightExtractor:
                         break
 
                     if page_no >= max_pages:
-                        break
+                        raise RuntimeError(
+                            f"incomplete_target: reached max_pages={max_pages} before natural end"
+                        )
 
                     # Trigger one 'load more' step. ues.bg may navigate; _load_more() is navigation-safe.
                     url_before = page.url
@@ -1174,10 +1261,9 @@ class PlaywrightExtractor:
                         page, target.timeout_ms
                     )
                     if not ok:
-                        print(
-                            f"[{target.name}] STOP imotiinfo_choose_gate page={pages_visited+1} url={page.url}"
+                        raise RuntimeError(
+                            f"incomplete_target: imotiinfo_choose_gate page={pages_visited+1} url={page.url}"
                         )
-                        break
 
                 payload = await self._extract(page)
                 try:
@@ -1271,7 +1357,9 @@ class PlaywrightExtractor:
                     await flush_batch(reason=f"reached_{batch_every}_pages")
 
                 if pages_visited >= max_pages:
-                    break
+                    raise RuntimeError(
+                        f"incomplete_target: reached max_pages={max_pages} before natural end"
+                    )
 
                 next_page_num = pages_visited + 1
                 manual_next = self._manual_page_url(target.url, next_page_num)
@@ -1292,10 +1380,9 @@ class PlaywrightExtractor:
                             timeout=target.timeout_ms,
                         )
                     except Exception as e:
-                        print(
-                            f"[{target.name}] STOP nav_failed page={pages_visited} next={manual_next} err={e}"
-                        )
-                        break
+                        raise RuntimeError(
+                            f"incomplete_target: nav_failed page={pages_visited} next={manual_next} err={e}"
+                        ) from e
 
                     if self._is_imotiinfo(page.url or "") and "/choose/" in (
                         page.url or ""
@@ -1304,10 +1391,9 @@ class PlaywrightExtractor:
                             page, target.timeout_ms
                         )
                         if not ok:
-                            print(
-                                f"[{target.name}] STOP imotiinfo_choose_gate page={pages_visited} url={page.url}"
+                            raise RuntimeError(
+                                f"incomplete_target: imotiinfo_choose_gate page={pages_visited} url={page.url}"
                             )
-                            break
                 else:
                     did_nav = await self._navigate_next(page)
                     if not did_nav:
@@ -1399,77 +1485,188 @@ class ScrapeRunner:
         )
 
     async def run(self, only: Optional[str] = None) -> None:
-        targets = self.loader.load()
+        all_targets = self.loader.load()
+
         if only:
-            targets = [t for t in targets if t.name == only]
+            targets = [t for t in all_targets if t.name == only]
             if not targets:
                 raise ValueError(f"No target named '{only}' in {self.targets_file}")
+        else:
+            targets = all_targets
 
         api = ApiClient(self.api_endpoint, self.api_key)
 
+        # Group targets by domain while preserving the order in targets.yml.
+        # Full runs process one complete domain at a time:
+        #   start cycle -> scrape all domain targets -> finalize cycle -> next domain.
+        domain_targets: Dict[str, List[ScrapeTarget]] = {}
+        for t in targets:
+            d = canonical_domain(t.url)
+            if not d:
+                raise ValueError(f"Could not determine domain for target '{t.name}': {t.url}")
+            domain_targets.setdefault(d, []).append(t)
+
         async with async_playwright() as p:
             browser = await self._launch_browser(p)
-            try:
-                ok = 0
-                fail = 0
+            total_ok = 0
+            total_fail = 0
 
-                for t in targets:
-                    print(f"=== {t.name} ===")
-                    print(f"URL: {t.url}")
-                    print(
-                        f"Mode: {t.mode} | post_strategy: {t.post_strategy} | post_batch_pages: {t.post_batch_pages}"
-                    )
+            async def run_one_target(t: ScrapeTarget) -> bool:
+                nonlocal browser, total_ok, total_fail
 
-                    attempts = 0
-                    while attempts < 2:
-                        attempts += 1
-                        try:
-                            posted = self._posted_sigs_by_target.setdefault(
-                                t.name, set()
-                            )
-                            seen_keys = self._seen_item_keys_by_target.setdefault(
-                                t.name, set()
-                            )
+                print(f"=== {t.name} ===")
+                print(f"URL: {t.url}")
+                print(
+                    f"Mode: {t.mode} | post_strategy: {t.post_strategy} | "
+                    f"post_batch_pages: {t.post_batch_pages}"
+                )
 
-                            pages_visited, posts_done, last_id = (
-                                await self.extractor.scrape_target(
-                                    api,
-                                    t,
-                                    browser,
-                                    posted_signatures=posted,
-                                    seen_item_keys=seen_keys,
-                                )
-                            )
-                            ok += 1
-                            print(
-                                f"DONE target={t.name} pages_visited={pages_visited} posts_done={posts_done} "
-                                f"last_extraction_id={last_id}"
-                            )
-                            break
+                attempts = 0
+                while attempts < 2:
+                    attempts += 1
+                    try:
+                        posted = self._posted_sigs_by_target.setdefault(t.name, set())
+                        seen_keys = self._seen_item_keys_by_target.setdefault(t.name, set())
 
-                        except Exception as e:
-                            msg = str(e)
-                            if "Target page, context or browser has been closed" in msg:
-                                print(
-                                    "Browser closed/crashed. Relaunching and retrying once..."
-                                )
+                        pages_visited, posts_done, last_id = await self.extractor.scrape_target(
+                            api,
+                            t,
+                            browser,
+                            posted_signatures=posted,
+                            seen_item_keys=seen_keys,
+                        )
+                        total_ok += 1
+                        print(
+                            f"DONE target={t.name} pages_visited={pages_visited} "
+                            f"posts_done={posts_done} last_extraction_id={last_id}"
+                        )
+                        return True
+
+                    except Exception as e:
+                        msg = str(e)
+                        if (
+                            "Target page, context or browser has been closed" in msg
+                            and attempts < 2
+                        ):
+                            print("Browser closed/crashed. Relaunching and retrying once...")
+                            try:
                                 try:
-                                    try:
-                                        await browser.close()
-                                    except Exception:
-                                        pass
-                                    browser = await self._launch_browser(p)
-                                except Exception as e2:
-                                    print(f"Browser relaunch failed: {e2}")
-                                    fail += 1
-                                    break
-                                continue
+                                    await browser.close()
+                                except Exception:
+                                    pass
+                                browser = await self._launch_browser(p)
+                            except Exception as e2:
+                                print(f"Browser relaunch failed: {e2}")
+                                break
+                            continue
 
-                            print(f"FAILED target={t.name} err={e}")
-                            fail += 1
-                            break
+                        print(f"FAILED target={t.name} err={e}")
+                        break
 
-                print(f"SUMMARY ok={ok} fail={fail}")
+                total_fail += 1
+                return False
+
+            try:
+                # --only is a smoke/debug run. It never creates or reconciles a
+                # domain inventory cycle because one target does not prove full coverage.
+                if only:
+                    print("PARTIAL RUN (--only): inventory reconciliation is disabled for safety.")
+                    await run_one_target(targets[0])
+                    print(f"SUMMARY ok={total_ok} fail={total_fail}")
+                    return
+
+                # Full run: each site's inventory cycle is completely independent.
+                # No future domain gets a RUNNING row until we actually reach it.
+                for domain, items in domain_targets.items():
+                    cycle_id: Optional[int] = None
+                    succeeded = 0
+                    failed = 0
+
+                    try:
+                        data = await api.start_inventory_cycle(domain, len(items))
+                        cycle_id = int(data["id"])
+                        print(
+                            f"INVENTORY_CYCLE START domain={domain} "
+                            f"cycle_id={cycle_id} targets={len(items)}"
+                        )
+
+                        for t in items:
+                            target_ok = await run_one_target(t)
+                            if target_ok:
+                                succeeded += 1
+                            else:
+                                failed += 1
+
+                        success = succeeded == len(items) and failed == 0
+                        result = await api.complete_inventory_cycle(
+                            domain,
+                            cycle_id,
+                            success=success,
+                            targets_succeeded=succeeded,
+                            targets_failed=failed,
+                        )
+                        print(
+                            "INVENTORY_CYCLE END "
+                            f"domain={domain} cycle_id={cycle_id} status={result.get('status')} "
+                            f"seen={result.get('listingsSeen')} missing={result.get('listingsMissing')} "
+                            f"deactivated={result.get('listingsDeactivated')} "
+                            f"reconciled={result.get('reconciliationApplied')}"
+                        )
+                        if result.get("message"):
+                            print(f"  {result.get('message')}")
+
+                    except (asyncio.CancelledError, KeyboardInterrupt):
+                        # Ctrl+C / task cancellation: explicitly close only the CURRENT
+                        # domain cycle. No reconciliation is applied to an aborted cycle.
+                        if cycle_id is not None:
+                            try:
+                                remaining = max(0, len(items) - succeeded)
+                                result = await api.complete_inventory_cycle(
+                                    domain,
+                                    cycle_id,
+                                    success=False,
+                                    targets_succeeded=succeeded,
+                                    targets_failed=max(failed, remaining),
+                                    abort_reason="runner_interrupted",
+                                )
+                                print(
+                                    f"INVENTORY_CYCLE ABORTED domain={domain} "
+                                    f"cycle_id={cycle_id} status={result.get('status')}"
+                                )
+                            except Exception as abort_exc:
+                                print(
+                                    f"INVENTORY_CYCLE ABORT_FINALIZE_FAILED domain={domain} "
+                                    f"cycle_id={cycle_id} err={abort_exc}"
+                                )
+                        raise
+
+                    except Exception as exc:
+                        # Unexpected domain-level failure. Close this domain as failed/aborted
+                        # when possible. Future domains have not been started yet.
+                        if cycle_id is not None:
+                            try:
+                                remaining = max(0, len(items) - succeeded)
+                                result = await api.complete_inventory_cycle(
+                                    domain,
+                                    cycle_id,
+                                    success=False,
+                                    targets_succeeded=succeeded,
+                                    targets_failed=max(failed, remaining),
+                                    abort_reason="domain_runner_exception",
+                                )
+                                print(
+                                    f"INVENTORY_CYCLE ABORTED domain={domain} "
+                                    f"cycle_id={cycle_id} status={result.get('status')} err={exc}"
+                                )
+                            except Exception as abort_exc:
+                                print(
+                                    f"INVENTORY_CYCLE FINALIZE_FAILED domain={domain} "
+                                    f"cycle_id={cycle_id} err={abort_exc}; original_err={exc}"
+                                )
+                        else:
+                            print(f"INVENTORY_CYCLE START_FAILED domain={domain} err={exc}")
+
+                print(f"SUMMARY ok={total_ok} fail={total_fail}")
 
             finally:
                 await api.close()

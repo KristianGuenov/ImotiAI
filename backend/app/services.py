@@ -3,14 +3,15 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import json
 from sqlalchemy import text
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
-from sqlalchemy import desc, exists, func, select
+from sqlalchemy import desc, exists, func, select, update
 from sqlalchemy.orm import Session, aliased
 
-from .models import ExtractionItem, ExtractionRun, Listing
+from .models import ExtractionItem, ExtractionRun, InventoryCycle, Listing
 from .schemas import (
     ExtractedItem,
     ExtractionIn,
@@ -18,6 +19,10 @@ from .schemas import (
     ExtractionListItem,
     ExtractionListOut,
     ExtractionOut,
+    InventoryCycleCompleteIn,
+    InventoryCycleCompleteOut,
+    InventoryCycleStartIn,
+    InventoryCycleStartOut,
 )
 
 
@@ -69,12 +74,47 @@ def _apply_images_to_listing(session: Session, *, item_url: str, cover: Optional
             UPDATE listings
             SET
               image = COALESCE(:cover, image),
-              images = :images::text[]
+              images = CAST(:images AS text[])
             WHERE item_url = :item_url
             """
         ),
         {"cover": cover, "images": images, "item_url": item_url},
     )
+
+
+def _apply_raw_payload_to_listing(session: Session, *, item_url: str, raw_payload: dict) -> None:
+    """Persist raw extractor output to listings.raw_payload (JSONB)."""
+    session.execute(
+        text(
+            """
+            UPDATE listings
+            SET raw_payload = CAST(:raw_payload AS jsonb)
+            WHERE item_url = :item_url
+            """
+        ),
+        {"raw_payload": json.dumps(raw_payload, ensure_ascii=False), "item_url": item_url},
+    )
+def _jsonable(obj: Any) -> Any:
+    """Best-effort conversion to JSON-serializable structures."""
+    if obj is None:
+        return None
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, dict):
+        return {str(k): _jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [_jsonable(v) for v in obj]
+    # pydantic models
+    if hasattr(obj, "dict"):
+        try:
+            return _jsonable(obj.dict())
+        except Exception:
+            pass
+    return str(obj)
+
+
 def _hash_text(s: Optional[str]) -> Optional[str]:
     if not s:
         return None
@@ -85,9 +125,26 @@ def _url_domain(url: str) -> Optional[str]:
     try:
         from urllib.parse import urlparse
 
-        return (urlparse(url).netloc or "").lower() or None
+        host = (urlparse(url).hostname or "").lower().strip()
+        if host.startswith("www."):
+            host = host[4:]
+        return host or None
     except Exception:
         return None
+
+
+def _normalize_domain(domain: Optional[str]) -> Optional[str]:
+    if not domain:
+        return None
+    d = str(domain).strip().lower()
+    if d.startswith("www."):
+        d = d[4:]
+    return d or None
+
+
+def _domain_variants(domain: str) -> List[str]:
+    d = _normalize_domain(domain) or domain.lower()
+    return [d, f"www.{d}"]
 
 
 def _chunks(seq: List[str], size: int) -> Iterable[List[str]]:
@@ -186,6 +243,213 @@ class ExtractionService:
 
         return buf.getvalue().encode("utf-8")
 
+    # ---------- inventory lifecycle ----------
+
+    def start_inventory_cycle(self, payload: InventoryCycleStartIn) -> InventoryCycleStartOut:
+        domain = _normalize_domain(payload.domain)
+        if not domain:
+            raise ValueError("Inventory cycle requires a valid domain")
+
+        cycle = InventoryCycle(
+            domain=domain,
+            started_at=datetime.now(timezone.utc),
+            status="running",
+            targets_expected=int(payload.targetsExpected or 0),
+            targets_succeeded=0,
+            targets_failed=0,
+            listings_seen=0,
+            listings_missing=0,
+            listings_deactivated=0,
+            meta_json=_sanitize(payload.meta or {}),
+        )
+        self.session.add(cycle)
+        self.session.commit()
+        self.session.refresh(cycle)
+
+        return InventoryCycleStartOut(
+            id=cycle.id,
+            domain=cycle.domain,
+            status=cycle.status,
+            startedAt=cycle.started_at,
+            targetsExpected=cycle.targets_expected,
+        )
+
+    def complete_inventory_cycle(
+        self,
+        cycle_id: int,
+        payload: InventoryCycleCompleteIn,
+    ) -> InventoryCycleCompleteOut:
+        cycle = self.session.get(InventoryCycle, cycle_id)
+        if cycle is None:
+            raise ValueError(f"Inventory cycle {cycle_id} not found")
+        if cycle.status != "running":
+            raise ValueError(f"Inventory cycle {cycle_id} is already {cycle.status}")
+
+        now = datetime.now(timezone.utc)
+        cycle.completed_at = now
+        cycle.targets_succeeded = int(payload.targetsSucceeded or 0)
+        cycle.targets_failed = int(payload.targetsFailed or 0)
+
+        merged_meta = dict(cycle.meta_json or {})
+        merged_meta.update(_sanitize(payload.meta or {}))
+        cycle.meta_json = merged_meta
+
+        variants = _domain_variants(cycle.domain)
+        seen_count = int(
+            self.session.execute(
+                select(func.count(Listing.id)).where(
+                    func.lower(Listing.domain).in_(variants),
+                    Listing.last_seen_cycle_id == cycle.id,
+                )
+            ).scalar_one()
+            or 0
+        )
+        cycle.listings_seen = seen_count
+
+        expected_ok = (
+            cycle.targets_expected <= 0
+            or cycle.targets_succeeded == cycle.targets_expected
+        )
+        run_ok = bool(payload.success) and cycle.targets_failed == 0 and expected_ok
+
+        if not run_ok:
+            cycle.status = "failed"
+            self.session.commit()
+            return InventoryCycleCompleteOut(
+                id=cycle.id,
+                domain=cycle.domain,
+                status=cycle.status,
+                completedAt=cycle.completed_at,
+                targetsExpected=cycle.targets_expected,
+                targetsSucceeded=cycle.targets_succeeded,
+                targetsFailed=cycle.targets_failed,
+                listingsSeen=cycle.listings_seen,
+                listingsMissing=0,
+                listingsDeactivated=0,
+                reconciliationApplied=False,
+                message="Cycle failed or was incomplete; no listings were marked missing.",
+            )
+
+        active_before = int(
+            self.session.execute(
+                select(func.count(Listing.id)).where(
+                    func.lower(Listing.domain).in_(variants),
+                    Listing.active.is_(True),
+                )
+            ).scalar_one()
+            or 0
+        )
+
+        # Completeness guard: if a previously populated domain suddenly returns less
+        # than half of its active inventory, preserve the DB and reject reconciliation.
+        # The newly seen listings remain stored; only missing/deactivation is skipped.
+        if active_before >= 100 and seen_count < int(active_before * 0.50):
+            cycle.status = "rejected"
+            merged_meta = dict(cycle.meta_json or {})
+            merged_meta["rejectionReason"] = "seen_count_below_50_percent_of_active_inventory"
+            merged_meta["activeBefore"] = active_before
+            cycle.meta_json = merged_meta
+            self.session.commit()
+            return InventoryCycleCompleteOut(
+                id=cycle.id,
+                domain=cycle.domain,
+                status=cycle.status,
+                completedAt=cycle.completed_at,
+                targetsExpected=cycle.targets_expected,
+                targetsSucceeded=cycle.targets_succeeded,
+                targetsFailed=cycle.targets_failed,
+                listingsSeen=cycle.listings_seen,
+                listingsMissing=0,
+                listingsDeactivated=0,
+                reconciliationApplied=False,
+                message=(
+                    f"Reconciliation rejected for safety: saw {seen_count} listings versus "
+                    f"{active_before} currently active listings."
+                ),
+            )
+
+        # Anything active for this domain that was not seen in this complete cycle
+        # gets one missing strike. Seen rows were already reset to zero by the heartbeat.
+        missing_filter = (
+            func.lower(Listing.domain).in_(variants),
+            Listing.active.is_(True),
+            func.coalesce(Listing.last_seen_cycle_id, 0) != cycle.id,
+        )
+
+        missing_count = int(
+            self.session.execute(
+                select(func.count(Listing.id)).where(*missing_filter)
+            ).scalar_one()
+            or 0
+        )
+
+        if missing_count:
+            self.session.execute(
+                update(Listing)
+                .where(*missing_filter)
+                .values(missing_cycles=Listing.missing_cycles + 1)
+            )
+
+        deactivate_filter = (
+            func.lower(Listing.domain).in_(variants),
+            Listing.active.is_(True),
+            Listing.missing_cycles >= 2,
+        )
+        deactivated_count = int(
+            self.session.execute(
+                select(func.count(Listing.id)).where(*deactivate_filter)
+            ).scalar_one()
+            or 0
+        )
+        if deactivated_count:
+            self.session.execute(
+                update(Listing)
+                .where(*deactivate_filter)
+                .values(active=False, inactive_at=now)
+            )
+
+        cycle.listings_missing = missing_count
+        cycle.listings_deactivated = deactivated_count
+        cycle.status = "completed"
+        self.session.commit()
+
+        return InventoryCycleCompleteOut(
+            id=cycle.id,
+            domain=cycle.domain,
+            status=cycle.status,
+            completedAt=cycle.completed_at,
+            targetsExpected=cycle.targets_expected,
+            targetsSucceeded=cycle.targets_succeeded,
+            targetsFailed=cycle.targets_failed,
+            listingsSeen=cycle.listings_seen,
+            listingsMissing=cycle.listings_missing,
+            listingsDeactivated=cycle.listings_deactivated,
+            reconciliationApplied=True,
+            message="Cycle reconciled successfully.",
+        )
+
+    def _cycle_id_for_payload(self, payload: ExtractionIn) -> Optional[int]:
+        meta = dict(payload.meta or {})
+        raw = meta.get("inventoryCycleId")
+        if raw in (None, ""):
+            return None
+        try:
+            cycle_id = int(raw)
+        except Exception as exc:
+            raise ValueError(f"Invalid inventoryCycleId: {raw!r}") from exc
+
+        cycle = self.session.get(InventoryCycle, cycle_id)
+        if cycle is None or cycle.status != "running":
+            raise ValueError(f"Inventory cycle {cycle_id} is not active")
+
+        source_domain = _url_domain(payload.sourceUrl)
+        if source_domain and source_domain != cycle.domain:
+            raise ValueError(
+                f"Inventory cycle {cycle_id} belongs to {cycle.domain}, "
+                f"but payload source is {source_domain}"
+            )
+        return cycle_id
+
     # ---------- detail queue ----------
 
     def detail_queue(
@@ -204,7 +468,7 @@ class ExtractionService:
         """
         limit = max(1, min(int(limit), 500))
 
-        stmt = select(Listing.item_url).where(Listing.detail_done.is_(False))
+        stmt = select(Listing.item_url).where(Listing.detail_done.is_(False), Listing.active.is_(True))
         if domain:
             stmt = stmt.where(func.lower(Listing.domain).like(f"%{domain.lower()}%"))
         if url_contains:
@@ -256,6 +520,11 @@ class ExtractionService:
                         image=None,
                         created_at=now,
                         updated_at=now,
+                        active=True,
+                        last_seen_at=None,
+                        last_seen_cycle_id=None,
+                        missing_cycles=0,
+                        inactive_at=None,
                         detail_done=False,
                         detail_scraped_at=None,
                         description=None,
@@ -272,14 +541,18 @@ class ExtractionService:
     def _create_index_run(self, payload: ExtractionIn, *, commit: bool) -> ExtractionOut:
         """Create a normal extraction run.
 
-        IMPORTANT: to avoid daily duplication, we only persist items that are:
-        - new URLs, OR
-        - URLs whose title_hash changed (often catches price changes too).
+        Historical ExtractionRun/ExtractionItem rows are still created only for:
+        - new URLs,
+        - changed title hashes, or
+        - reactivated URLs.
 
-        Unchanged listings are skipped: no new ExtractionItem row, no Listing update.
+        Every seen URL, including unchanged URLs, receives a lightweight presence
+        heartbeat on `listings`. This is what allows complete inventory cycles to
+        safely determine which listings disappeared.
         """
         extracted_at = payload.extractedAt.astimezone(timezone.utc)
         now = datetime.now(timezone.utc)
+        cycle_id = self._cycle_id_for_payload(payload)
 
         # Deduplicate incoming items by URL (keep first occurrence)
         raw_items = list(payload.items or [])
@@ -293,10 +566,8 @@ class ExtractionService:
 
         urls = list(dedup.keys())
         if not urls:
-            # nothing to store
             last = self._latest_run_for_source_url(_sanitize(payload.sourceUrl))
             if last is None:
-                # create a minimal run to keep API behavior stable
                 run = ExtractionRun(
                     source_url=_sanitize(payload.sourceUrl),
                     page_title=_sanitize(payload.pageTitle),
@@ -320,6 +591,7 @@ class ExtractionService:
 
         new_urls: Set[str] = set()
         changed_urls: Set[str] = set()
+        reactivated_urls: Set[str] = set()
 
         for u, it in dedup.items():
             title = _sanitize(getattr(it, "title", None))
@@ -327,18 +599,38 @@ class ExtractionService:
             row = existing.get(u)
             if row is None:
                 new_urls.add(u)
-            else:
-                if (row.title_hash or None) != (th or None):
-                    changed_urls.add(u)
+                continue
 
-        to_store = new_urls | changed_urls
+            was_inactive = not bool(row.active)
 
-        # If nothing changed: return latest run for this source page (skip DB writes)
+            # Presence heartbeat: intentionally does NOT touch updated_at.
+            row.domain = _url_domain(u) or row.domain
+            row.last_seen_at = extracted_at
+            row.active = True
+            row.missing_cycles = 0
+            row.inactive_at = None
+            if cycle_id is not None:
+                row.last_seen_cycle_id = cycle_id
+
+            if was_inactive:
+                reactivated_urls.add(u)
+            if (row.title_hash or None) != (th or None):
+                changed_urls.add(u)
+
+        to_store = new_urls | changed_urls | reactivated_urls
+
+        # If nothing changed, persist only the lightweight heartbeat and return the
+        # latest historical run. No duplicate ExtractionItem rows are created.
         if not to_store:
+            if commit:
+                self.session.commit()
+            else:
+                self.session.flush()
+
             last = self._latest_run_for_source_url(_sanitize(payload.sourceUrl))
             if last is not None:
                 return self._to_out(last)
-            # If we have no previous run for this sourceUrl, still create one minimal run.
+
             run = ExtractionRun(
                 source_url=_sanitize(payload.sourceUrl),
                 page_title=_sanitize(payload.pageTitle),
@@ -352,7 +644,7 @@ class ExtractionService:
                 self.session.commit()
             return self._to_out(run)
 
-        # Create run only when we have something new/changed.
+        # Create run only when we have something new/changed/reactivated.
         run = ExtractionRun(
             source_url=_sanitize(payload.sourceUrl),
             page_title=_sanitize(payload.pageTitle),
@@ -363,7 +655,7 @@ class ExtractionService:
         self.session.add(run)
         self.session.flush()
 
-        # Persist only the new/changed items
+        # Persist only the new/changed/reactivated items
         stored_items: List[ExtractionItem] = []
         for u in urls:
             if u not in to_store:
@@ -372,8 +664,6 @@ class ExtractionService:
             it = dedup[u]
             row = existing.get(u)
 
-            # Keep the longer description if we already have a detailed one.
-            # This prevents an index refresh from temporarily overwriting full descriptions.
             raw_text = _sanitize(getattr(it, "rawText", None))
             if row is not None and row.description:
                 try:
@@ -413,6 +703,11 @@ class ExtractionService:
                     image=img,
                     created_at=now,
                     updated_at=now,
+                    active=True,
+                    last_seen_at=extracted_at,
+                    last_seen_cycle_id=cycle_id,
+                    missing_cycles=0,
+                    inactive_at=None,
                     detail_done=False,
                     detail_scraped_at=None,
                     description=None,
@@ -421,14 +716,21 @@ class ExtractionService:
                 self.session.add(row)
                 existing[u] = row
             else:
-                # Update title/image and reset detail_done so it re-enters the queue.
+                row.domain = _url_domain(u) or row.domain
                 row.title = title
                 row.title_hash = th
                 if img:
                     row.image = img
                 row.updated_at = now
+                row.last_seen_at = extracted_at
+                row.active = True
+                row.missing_cycles = 0
+                row.inactive_at = None
+                if cycle_id is not None:
+                    row.last_seen_cycle_id = cycle_id
 
-                # Reset detail flag on change, but keep the old description as a fallback.
+                # Re-scrape details when the index snapshot changed or the listing
+                # reappeared after being inactive.
                 row.detail_done = False
                 row.detail_scraped_at = None
 
@@ -471,10 +773,16 @@ class ExtractionService:
                 image=cover,
                 created_at=now,
                 updated_at=now,
+                active=True,
+                last_seen_at=now,
+                last_seen_cycle_id=None,
+                missing_cycles=0,
+                inactive_at=None,
                 detail_done=True,
                 detail_scraped_at=extracted_at,
                 description=full_desc,
                 description_hash=desc_hash,
+                raw_payload=_jsonable(payload.dict()),
             )
             self.session.add(listing)
         else:
@@ -489,6 +797,11 @@ class ExtractionService:
             listing.detail_scraped_at = extracted_at
             listing.description = full_desc
             listing.description_hash = desc_hash
+            # store full raw v2 payload for later normalization
+            try:
+                listing.raw_payload = _jsonable(payload.dict())
+            except Exception:
+                listing.raw_payload = _jsonable(payload)
 
         # Persist cover + images to listings (images column may not be mapped on the ORM model)
         if cover and listing is not None:
@@ -496,6 +809,8 @@ class ExtractionService:
         if has_new_images or cover:
             self.session.flush()
             _apply_images_to_listing(self.session, item_url=source_url, cover=cover, images=images)
+        # Persist raw payload even if ORM is out-of-sync with schema
+        _apply_raw_payload_to_listing(self.session, item_url=source_url, raw_payload=_jsonable(payload.dict()))
 
         # 2) Overwrite raw_text on the latest index item for that URL (also refresh images if provided)
         idx_item, idx_run = self._latest_index_item_and_run(source_url)
@@ -582,7 +897,7 @@ class ExtractionService:
                 UPDATE listings
                 SET
                 image = COALESCE(:image, image),
-                images = :images::text[],
+                images = CAST(:images AS text[]),
                 detail_done = TRUE
                 WHERE item_url = :item_url
                 """

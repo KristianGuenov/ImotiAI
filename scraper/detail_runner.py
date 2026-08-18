@@ -306,18 +306,44 @@ class DetailExtractor:
             timeout=10_000,
         )
 
-    async def extract_description(
-        self, page: Page, script_path: str
-    ) -> Tuple[Optional[str], Optional[str], Optional[str], List[str]]:
+    async def extract_detail(self, page: Page, script_path: str) -> Dict[str, Any]:
+        """
+        Executes the in-page extractor and returns the full extraction dict.
+        The extractor should return at minimum: {ok, title, description, image, images}
+        and may additionally return v2 raw harvest fields.
+        """
         await self.ensure(page, script_path)
         out = await page.evaluate("() => window.__listingDetailExtractor.extract()")
         if not isinstance(out, dict) or not out.get("ok"):
             raise RuntimeError("Detail extraction failed")
-        desc = out.get("description")
-        title = out.get("title")
-        image = out.get("image")
-        images = out.get("images")
 
+        # Basic normalization for core fields
+        if isinstance(out.get("description"), str):
+            out["description"] = out["description"].strip()
+        if isinstance(out.get("title"), str):
+            out["title"] = out["title"].strip()
+        if isinstance(out.get("image"), str):
+            out["image"] = out["image"].strip()
+        if not isinstance(out.get("images"), list):
+            out["images"] = []
+        else:
+            out["images"] = [str(x).strip() for x in out["images"] if isinstance(x, str) and x.strip()]
+
+        return out
+
+    async def extract_description(
+        self, page: Page, script_path: str
+    ) -> Tuple[Optional[str], Optional[str], Optional[str], List[str]]:
+        """
+        Legacy adapter: returns (desc, title, cover_image, images) for older call sites.
+        """
+        out = await self.extract_detail(page, script_path)
+        return (
+            out.get("description"),
+            out.get("title"),
+            out.get("image"),
+            out.get("images") or [],
+        )
         desc = desc.strip() if isinstance(desc, str) else None
         title = title.strip() if isinstance(title, str) else None
         image = image.strip() if isinstance(image, str) else None
@@ -393,30 +419,71 @@ class ContextPool:
 
 def make_detail_payload(
     listing_url: str,
-    title: Optional[str],
-    description: Optional[str],
-    image: Optional[str],
-    images: List[str],
+    extracted: Dict[str, Any],
 ) -> Dict[str, Any]:
+    """
+    v2 detail payload:
+      - keep legacy top-level keys for compatibility
+      - add raw harvest fields (jsonld/state/kv/text blocks/contacts/media/signals)
+    """
+    title = extracted.get("title")
+    description = extracted.get("description") or ""
+    image = extracted.get("image")
+    images = extracted.get("images") or []
+
+    # Raw harvest fields (may be missing depending on extractor version)
+    raw_jsonld = extracted.get("raw_jsonld") or []
+    raw_state_blobs = extracted.get("raw_state_blobs") or []
+    raw_kv = extracted.get("raw_kv") or []
+    raw_text_blocks = extracted.get("raw_text_blocks") or []
+    raw_contacts = extracted.get("raw_contacts") or {}
+    raw_media = extracted.get("raw_media") or {}
+    signals = extracted.get("signals") or {}
+
+    fields = [
+        # legacy
+        "description",
+        "rawText",
+        "image",
+        "images",
+        # v2 raw harvest
+        "raw_jsonld",
+        "raw_state_blobs",
+        "raw_kv",
+        "raw_text_blocks",
+        "raw_contacts",
+        "raw_media",
+        "signals",
+    ]
+
     return {
-        "dataVersion": 1,
+        "dataVersion": 2,
         "sourceUrl": listing_url,
         "pageTitle": title,
         "extractedAt": _now_iso(),
         "meta": {
             "mode": "detail",
             "domain": _domain(listing_url),
-            "fields": ["description", "rawText", "image", "images"],
+            "fields": fields,
         },
         "items": [
             {
+                # legacy fields
                 "title": title,
                 "url": listing_url,
-                "description": description or "",
-                "rawText": description or "",
+                "description": description,
+                "rawText": description,
                 "image": image,
-                "images": images or [],
+                "images": images,
                 "texts": [],
+                # v2 raw harvest
+                "raw_jsonld": raw_jsonld,
+                "raw_state_blobs": raw_state_blobs,
+                "raw_kv": raw_kv,
+                "raw_text_blocks": raw_text_blocks,
+                "raw_contacts": raw_contacts,
+                "raw_media": raw_media,
+                "signals": signals,
             }
         ],
     }
@@ -436,9 +503,11 @@ async def scrape_one(
         await _auto_scroll(page)
         await page.wait_for_timeout(250)
 
-        title, desc, image, images = await extractor.extract_description(
-            page, rule.extractor_script
-        )
+        extracted = await extractor.extract_detail(page, rule.extractor_script)
+        title = extracted.get("title")
+        desc = extracted.get("description")
+        image = extracted.get("image")
+        images = extracted.get("images") or []
 
         print(
             f"🖼️ images extracted: {len(images)} | cover={image} | sample={images[:5]}",
@@ -446,15 +515,24 @@ async def scrape_one(
         )
 
         # --- ADDED: per-URL skip reasons (so "scraped=5" is explainable) ---
-        if not desc:
-            print(f"⏭️ skip (no desc): {url}")
+        # v2: don't skip solely on short description if we harvested other useful signals (kv/jsonld/state/images).
+        kv_len = len((extracted.get("raw_kv") or [])) if isinstance(extracted, dict) else 0
+        jsonld_len = len((extracted.get("raw_jsonld") or [])) if isinstance(extracted, dict) else 0
+        state_len = len((extracted.get("raw_state_blobs") or [])) if isinstance(extracted, dict) else 0
+        imgs_len = len(images) if isinstance(images, list) else 0
+
+        has_other_signal = (kv_len + jsonld_len + state_len + imgs_len) > 0
+
+        if not desc and not has_other_signal:
+            print(f"⏭️ skip (no desc/no signals): {url}")
             return None
-        if rule.min_desc_len and len(desc) < rule.min_desc_len:
-            print(f"⏭️ skip (too short {len(desc)}<{rule.min_desc_len}): {url}")
+
+        if rule.min_desc_len and len(desc) < rule.min_desc_len and not has_other_signal:
+            print(f"⏭️ skip (too short {len(desc)}<{rule.min_desc_len} and no signals): {url}")
             return None
         # ---------------------------------------------------------------
 
-        return make_detail_payload(url, title, desc, image, images)
+        return make_detail_payload(url, extracted)
     finally:
         try:
             await page.close()

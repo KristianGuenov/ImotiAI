@@ -13,13 +13,17 @@ from .schemas import (
     ExtractionIn,
     ExtractionListOut,
     ExtractionOut,
+    InventoryCycleCompleteIn,
+    InventoryCycleCompleteOut,
+    InventoryCycleStartIn,
+    InventoryCycleStartOut,
 )
 from .services import ExtractionService
 from .settings import Settings, get_settings
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Legal List Extractor API", version="1.3.0")
+    app = FastAPI(title="Legal List Extractor API", version="1.4.0")
 
     app.add_middleware(
         CORSMiddleware,
@@ -31,6 +35,8 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     def _startup() -> None:
+        # Creates new tables, but does NOT add new columns to an existing table.
+        # Run the supplied inventory_lifecycle_migration.sql once before testing.
         Base.metadata.create_all(bind=engine)
 
     @app.get("/health")
@@ -69,7 +75,7 @@ def create_app() -> FastAPI:
             headers={"Content-Disposition": f'attachment; filename="extraction_{extraction_id}_items.csv"'},
         )
 
-    # Queue of listing URLs already in DB that are missing a detail run.
+    # Queue of active listing URLs already in DB that are missing a detail run.
     @app.get("/api/v1/detail-queue", response_model=DetailQueueOut, dependencies=[Depends(require_api_key)])
     def detail_queue(
         domain: str | None = None,
@@ -79,6 +85,33 @@ def create_app() -> FastAPI:
     ) -> DetailQueueOut:
         urls = ExtractionService(session).detail_queue(domain=domain, url_contains=url_contains, limit=limit)
         return DetailQueueOut(urls=urls)
+
+    # Inventory cycle endpoints used only by the regular/index runner.
+    @app.post(
+        "/api/v1/inventory-cycles/start",
+        response_model=InventoryCycleStartOut,
+        dependencies=[Depends(require_api_key)],
+    )
+    def start_inventory_cycle(
+        payload: InventoryCycleStartIn,
+        session: Session = Depends(get_session),
+    ) -> InventoryCycleStartOut:
+        return ExtractionService(session).start_inventory_cycle(payload)
+
+    @app.post(
+        "/api/v1/inventory-cycles/{cycle_id}/complete",
+        response_model=InventoryCycleCompleteOut,
+        dependencies=[Depends(require_api_key)],
+    )
+    def complete_inventory_cycle(
+        cycle_id: int,
+        payload: InventoryCycleCompleteIn,
+        session: Session = Depends(get_session),
+    ) -> InventoryCycleCompleteOut:
+        try:
+            return ExtractionService(session).complete_inventory_cycle(cycle_id, payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return app
 

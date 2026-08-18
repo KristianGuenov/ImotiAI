@@ -333,13 +333,250 @@
 
 
   window.__listingDetailExtractor = {
-    version: 1,
+    version: 2,
     extract() {
+      // Preserve existing behavior for title/description/images
       const description = normalize(extractDescription());
       const title = pickTitle();
       const images = extractImages(60);
       const image = images.length ? images[0] : null;
-      return { ok: true, url: location.href, title, description, image, images };
+
+      // ---- v2 raw harvester additions (generic, site-agnostic) ----
+      const STATE_MARKERS = [
+        "__NEXT_DATA__",
+        "__NUXT__",
+        "window.__INITIAL_STATE__",
+        "INITIAL_STATE",
+        "apolloState",
+        "preloadedState",
+        "reduxState",
+      ];
+
+      const PHONE_RE = /(?<!\d)(\+?\d[\d\s().-]{7,}\d)(?!\d)/g;
+      const EMAIL_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig;
+
+      function capText(s, maxLen) {
+        const t = String(s || "");
+        if (t.length <= maxLen) return t;
+        return t.slice(0, maxLen) + `\n\n[TRUNCATED ${t.length - maxLen} chars]`;
+      }
+
+      function uniq(arr) {
+        const out = [];
+        const seen = new Set();
+        for (const x of arr || []) {
+          const v = normalize(x);
+          if (!v) continue;
+          if (seen.has(v)) continue;
+          seen.add(v);
+          out.push(v);
+        }
+        return out;
+      }
+
+      function extractJsonLd(maxBlocks = 20) {
+        const out = [];
+        for (const s of Array.from(document.querySelectorAll('script[type="application/ld+json"]'))) {
+          const t = (s.textContent || "").trim();
+          if (!t) continue;
+          try { out.push(JSON.parse(t)); } catch (_) {}
+          if (out.length >= maxBlocks) break;
+        }
+        return out;
+      }
+
+      function extractStateBlobs(maxBlocks = 8) {
+        const blobs = [];
+        const scripts = Array.from(document.querySelectorAll("script"));
+        for (const s of scripts) {
+          const id = normalize(s.id || "");
+          const txt = s.textContent || "";
+          const len = txt.length || 0;
+          if (!txt || len < 2000) continue;
+
+          let marker = null;
+          if (id && STATE_MARKERS.includes(id)) marker = id;
+          if (!marker) {
+            for (const m of STATE_MARKERS) {
+              if (txt.includes(m)) { marker = m; break; }
+            }
+          }
+          const looksJson = txt.trim().startsWith("{") || txt.trim().startsWith("[");
+          if (marker || (looksJson && len >= 50_000)) {
+            blobs.push({
+              marker: marker,
+              id: id || null,
+              length: len,
+              snippet: capText(txt, 20_000),
+            });
+          }
+          if (blobs.length >= maxBlocks) break;
+        }
+        return blobs;
+      }
+
+      function extractKvPairs(maxPairs = 250) {
+        const pairs = [];
+
+        // dl dt/dd
+        for (const dl of Array.from(document.querySelectorAll("dl"))) {
+          const dts = Array.from(dl.querySelectorAll("dt"));
+          const dds = Array.from(dl.querySelectorAll("dd"));
+          const n = Math.min(dts.length, dds.length);
+          if (n >= 2) {
+            for (let i = 0; i < n; i++) {
+              const k = normalize(dts[i]?.textContent);
+              const v = normalize(dds[i]?.textContent);
+              if (k && v) pairs.push({ k, v, source: "dl" });
+            }
+          }
+        }
+
+        // tables
+        for (const t of Array.from(document.querySelectorAll("table"))) {
+          for (const r of Array.from(t.querySelectorAll("tr"))) {
+            const th = r.querySelector("th");
+            const tds = Array.from(r.querySelectorAll("td"));
+            if (th && tds.length) {
+              const k = normalize(th.textContent);
+              const v = normalize(tds[0].textContent);
+              if (k && v) pairs.push({ k, v, source: "table" });
+            } else if (tds.length >= 2) {
+              const k = normalize(tds[0].textContent);
+              const v = normalize(tds[1].textContent);
+              if (k && v) pairs.push({ k, v, source: "table" });
+            }
+          }
+        }
+
+        // label:value patterns (short)
+        const candidates = Array.from(document.querySelectorAll("li, p, div, span"))
+          .slice(0, 4000)
+          .map((n) => normalize(n.textContent))
+          .filter((t) => t && t.length <= 120 && t.includes(":"));
+        for (const t of candidates) {
+          const parts = t.split(":");
+          if (parts.length !== 2) continue;
+          const k = normalize(parts[0]);
+          const v = normalize(parts[1]);
+          if (k && v && k.length <= 40 && v.length <= 70) {
+            pairs.push({ k, v, source: "label_value" });
+          }
+        }
+
+        const seen = new Set();
+        const out = [];
+        for (const p of pairs) {
+          const key = `${p.k}||${p.v}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push(p);
+          if (out.length >= maxPairs) break;
+        }
+        return out;
+      }
+
+      function extractTextBlocks(maxBlocks = 50) {
+        const blocks = [];
+        const headings = Array.from(document.querySelectorAll("h1,h2,h3")).slice(0, 30);
+        for (const h of headings) {
+          const section = normalize(h.textContent);
+          if (!section) continue;
+          let txt = "";
+          let n = h.nextElementSibling;
+          let steps = 0;
+          while (n && steps < 6) {
+            const t = getText(n, 8000);
+            if (t) txt += (txt ? "\n" : "") + t;
+            n = n.nextElementSibling;
+            steps++;
+          }
+          txt = normalize(txt);
+          if (txt) blocks.push({ section, text: capText(txt, 12_000) });
+          if (blocks.length >= maxBlocks) break;
+        }
+        if (blocks.length === 0) {
+          const bodyExcerpt = capText(getText(document.body, 30_000), 30_000);
+          if (bodyExcerpt) blocks.push({ section: "body_excerpt", text: bodyExcerpt });
+        }
+        return blocks;
+      }
+
+      function extractContacts() {
+        const bodyText = capText(getText(document.body, 250_000), 250_000);
+        const phones = uniq(bodyText.match(PHONE_RE) || []).slice(0, 20);
+        const emails = uniq(bodyText.match(EMAIL_RE) || []).slice(0, 20);
+        return { phones, emails };
+      }
+
+      function extractMediaLinks() {
+        const out = [];
+        for (const a of Array.from(document.querySelectorAll("a[href]"))) {
+          const href = a.getAttribute("href") || "";
+          try { out.push(new URL(href, location.href).toString()); } catch (_) {}
+        }
+        const links = uniq(out);
+
+        const video = links.filter((u) => /youtube\.com|youtu\.be|vimeo\.com/i.test(u)).slice(0, 10);
+        const virtual_tour = links.filter((u) => /virtual|tour|360|matterport/i.test(u)).slice(0, 10);
+        const floorplan = links
+          .filter((u) => /floor|plan|схема|разпредел/i.test(u))
+          .slice(0, 10);
+        const map_links = links.filter((u) => /google\.com\/maps|maps\.google|openstreetmap|map/i.test(u)).slice(0, 10);
+
+        return { video, virtual_tour, floorplan, map_links };
+      }
+
+      function computeSignals(payload) {
+        const txt = payload.description || "";
+        const hasJsonld = Array.isArray(payload.raw_jsonld) && payload.raw_jsonld.length > 0;
+        const hasState = Array.isArray(payload.raw_state_blobs) && payload.raw_state_blobs.length > 0;
+        const kvCount = Array.isArray(payload.raw_kv) ? payload.raw_kv.length : 0;
+        const hasKv = kvCount > 0;
+        const hasContacts = payload.raw_contacts && ((payload.raw_contacts.phones || []).length + (payload.raw_contacts.emails || []).length) > 0;
+
+        let primary = "description_only";
+        if (hasState) primary = "state_blob";
+        else if (hasJsonld && hasKv) primary = "mixed";
+        else if (hasJsonld) primary = "jsonld";
+        else if (hasKv) primary = "kv";
+
+        return {
+          has_jsonld: hasJsonld,
+          has_state_blob: hasState,
+          has_kv_pairs: hasKv,
+          kv_pair_count: kvCount,
+          has_contacts: hasContacts,
+          images_count: (payload.images || []).length,
+          text_length: txt.length,
+          primary_payload_source: primary,
+        };
+      }
+
+      const raw_jsonld = extractJsonLd(20);
+      const raw_state_blobs = extractStateBlobs(8);
+      const raw_kv = extractKvPairs(250);
+      const raw_text_blocks = extractTextBlocks(50);
+      const raw_contacts = extractContacts();
+      const raw_media = extractMediaLinks();
+
+      const payload = {
+        ok: true,
+        url: location.href,
+        title,
+        description,
+        image,
+        images,
+        raw_jsonld,
+        raw_state_blobs,
+        raw_kv,
+        raw_text_blocks,
+        raw_contacts,
+        raw_media,
+      };
+      payload.signals = computeSignals(payload);
+      return payload;
     },
   };
+
 })();

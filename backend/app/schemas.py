@@ -13,6 +13,15 @@ class ExtractedItem(BaseModel):
     images: List[str] = Field(default_factory=list)
     texts: List[str] = Field(default_factory=list)
     rawText: Optional[str] = None
+    # v2 raw harvester fields (all optional for backwards compat)
+    description: Optional[str] = None
+    raw_jsonld: List[Dict[str, Any]] = Field(default_factory=list)
+    raw_kv: List[Dict[str, Any]] = Field(default_factory=list)
+    raw_text_blocks: List[Dict[str, Any]] = Field(default_factory=list)
+    raw_state_blobs: List[Dict[str, Any]] = Field(default_factory=list)
+    raw_contacts: Dict[str, Any] = Field(default_factory=dict)
+    raw_media: Dict[str, Any] = Field(default_factory=dict)
+    signals: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ExtractionIn(BaseModel):
@@ -51,6 +60,45 @@ class ExtractionListOut(BaseModel):
 
 class DetailQueueOut(BaseModel):
     urls: List[str] = Field(default_factory=list)
+
+
+# --- Inventory lifecycle ---
+
+
+class InventoryCycleStartIn(BaseModel):
+    domain: str
+    targetsExpected: int = Field(default=0, ge=0)
+    meta: Dict[str, Any] = Field(default_factory=dict)
+
+
+class InventoryCycleStartOut(BaseModel):
+    id: int
+    domain: str
+    status: str
+    startedAt: datetime
+    targetsExpected: int
+
+
+class InventoryCycleCompleteIn(BaseModel):
+    success: bool
+    targetsSucceeded: int = Field(default=0, ge=0)
+    targetsFailed: int = Field(default=0, ge=0)
+    meta: Dict[str, Any] = Field(default_factory=dict)
+
+
+class InventoryCycleCompleteOut(BaseModel):
+    id: int
+    domain: str
+    status: str
+    completedAt: datetime
+    targetsExpected: int
+    targetsSucceeded: int
+    targetsFailed: int
+    listingsSeen: int
+    listingsMissing: int
+    listingsDeactivated: int
+    reconciliationApplied: bool
+    message: str
 
 
 # --- Batch create (speed path, used by detail_runner when enabled) ---
