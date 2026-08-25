@@ -39,6 +39,44 @@ def _sanitize(value):
     return value
 
 
+def _detail_value_has_content(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, dict):
+        return any(_detail_value_has_content(v) for v in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return any(_detail_value_has_content(v) for v in value)
+    return True
+
+
+def _detail_payload_has_meaningful_content(first: Any) -> bool:
+    """
+    Server-side safety check for detail writes.
+
+    Extraction is deliberately permissive: missing images and implausible business
+    values do not make a detail scrape invalid. We only reject payloads that contain
+    no meaningful text/structured evidence at all.
+    """
+    if first is None:
+        return False
+
+    for field in (
+        "rawText",
+        "description",
+        "raw_text_blocks",
+        "raw_kv",
+        "raw_jsonld",
+        "raw_state_blobs",
+        "raw_contacts",
+        "signals",
+    ):
+        if _detail_value_has_content(getattr(first, field, None)):
+            return True
+    return False
+
+
 def _normalize_url_list(value) -> List[str]:
     if not value:
         return []
@@ -752,6 +790,14 @@ class ExtractionService:
         # The detail runner posts 1 item where rawText is the full description.
         items_in = list(payload.items or [])
         first = items_in[0] if items_in else None
+
+        # Never mark an empty/block/error page as detailed. Missing images are fine,
+        # and no plausibility checks belong here; normalization handles quality later.
+        if not _detail_payload_has_meaningful_content(first):
+            raise ValueError(
+                f"Detail payload for {source_url} contains no meaningful text or structured evidence"
+            )
+
         full_desc = _sanitize(getattr(first, "rawText", None)) if first is not None else None
         full_desc = (full_desc or "").strip() or None
         desc_hash = _hash_text(full_desc) if full_desc else None
@@ -786,12 +832,8 @@ class ExtractionService:
             )
             self.session.add(listing)
         else:
-            # Avoid DB churn: if already detailed with same description and no new images, do nothing.
-            if (not has_new_images) and listing.detail_done and (listing.description_hash or None) == (desc_hash or None):
-                run = self._latest_index_run_for_url(source_url)
-                if run is not None:
-                    return self._to_out(run)
-
+            # Always refresh raw detail evidence when a listing is intentionally re-scraped.
+            # A changed index listing may have the same description but different structured data.
             listing.updated_at = now
             listing.detail_done = True
             listing.detail_scraped_at = extracted_at

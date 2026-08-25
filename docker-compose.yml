@@ -44,6 +44,7 @@ services:
       # Index runner uses this endpoint
       API_ENDPOINT: http://api:8787/api/v1/extractions
       API_KEY: ${API_KEY}
+      SCRAPER_DOMAIN_CONCURRENCY: ${SCRAPER_DOMAIN_CONCURRENCY:-21}
       TARGETS_FILE: /app/targets.yml
       CONTENT_SCRIPT_PATH: /app/content.js
       TZ: Europe/Sofia
