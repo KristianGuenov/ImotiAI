@@ -320,7 +320,7 @@
   max_pages: 2750
   delay_ms: 1500
   wait_until: domcontentloaded
-  timeout_ms: 45000
+  timeout_ms: 20000
   post_strategy: per_target
   post_batch_pages: 50
 

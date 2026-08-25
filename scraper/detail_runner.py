@@ -78,6 +78,72 @@ def _safe_int(x: Any, default: int) -> int:
         return default
 
 
+def _nonempty_text(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.strip()
+
+
+def _structured_signal_count(value: Any) -> int:
+    """Count non-empty structured evidence without judging whether values are plausible."""
+    if isinstance(value, dict):
+        return 1 if any(v not in (None, "", [], {}) for v in value.values()) else 0
+    if isinstance(value, list):
+        return sum(1 for item in value if item not in (None, "", [], {}))
+    return 1 if value not in (None, "", [], {}) else 0
+
+
+def has_meaningful_detail(extracted: Dict[str, Any], min_desc_len: int) -> Tuple[bool, str]:
+    """
+    Decide whether extraction succeeded strongly enough to mark detail_done later.
+
+    This is intentionally liberal:
+    - images are optional and do NOT decide success;
+    - prices/areas/rooms are not sanity-checked here;
+    - useful text OR structured raw evidence is enough.
+    """
+    desc = _nonempty_text(extracted.get("description"))
+    text_blocks = extracted.get("raw_text_blocks") or []
+
+    # A normal description is sufficient. Keep the threshold small; the purpose is
+    # to reject empty/block/error pages, not poor-quality property advertisements.
+    desc_threshold = max(20, min(int(min_desc_len or 0), 30))
+    if len(desc) >= desc_threshold:
+        return True, f"description:{len(desc)}"
+
+    # Some sites expose the useful body as text blocks rather than description.
+    if isinstance(text_blocks, list):
+        block_text_len = 0
+        for block in text_blocks:
+            if isinstance(block, str):
+                block_text_len += len(block.strip())
+            elif isinstance(block, dict):
+                for key in ("text", "value", "content", "label"):
+                    value = block.get(key)
+                    if isinstance(value, str):
+                        block_text_len += len(value.strip())
+        if block_text_len >= 30:
+            return True, f"raw_text_blocks:{block_text_len}"
+
+    structured_count = sum(
+        _structured_signal_count(extracted.get(key))
+        for key in ("raw_kv", "raw_jsonld", "raw_state_blobs")
+    )
+    if structured_count > 0:
+        return True, f"structured:{structured_count}"
+
+    # A shorter description can still be useful when accompanied by listing-specific
+    # contacts/signals, but images alone never make a scrape successful.
+    secondary_count = (
+        _structured_signal_count(extracted.get("raw_contacts"))
+        + _structured_signal_count(extracted.get("signals"))
+    )
+    if len(desc) >= 10 and secondary_count > 0:
+        return True, f"short_description:{len(desc)}+signals:{secondary_count}"
+
+    return False, f"insufficient_content:description={len(desc)},structured={structured_count},secondary={secondary_count}"
+
+
 @dataclass
 class DomainRule:
     domain: str
@@ -363,6 +429,7 @@ class ContextPool:
         self.browser = browser
         self.extractor = extractor
         self._contexts: Dict[str, BrowserContext] = {}
+        self._context_locks: Dict[str, asyncio.Lock] = {}
 
     async def get(self, rule: DomainRule) -> BrowserContext:
         key = f"{rule.domain}::{rule.extractor_script}"
@@ -370,43 +437,51 @@ class ContextPool:
         if ctx is not None:
             return ctx
 
-        ua = (
-            "Mozilla/5.0 (X11; Linux x86_64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        )
+        # Multiple detail workers may request the same domain context at once.
+        # Serialize context creation only; page scraping remains concurrent.
+        lock = self._context_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            ctx = self._contexts.get(key)
+            if ctx is not None:
+                return ctx
 
-        ctx = await self.browser.new_context(
-            user_agent=ua,
-            viewport={"width": 1365, "height": 900},
-            java_script_enabled=True,
-            locale="bg-BG",
-            ignore_https_errors=True,
-            bypass_csp=True,
-        )
+            ua = (
+                "Mozilla/5.0 (X11; Linux x86_64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            )
 
-        script = self.extractor.load_script(rule.extractor_script)
-        await ctx.add_init_script(script=script)
+            ctx = await self.browser.new_context(
+                user_agent=ua,
+                viewport={"width": 1365, "height": 900},
+                java_script_enabled=True,
+                locale="bg-BG",
+                ignore_https_errors=True,
+                bypass_csp=True,
+            )
 
-        async def _route_handler(route, request):
-            url = (request.url or "").lower()
-            if any(part in url for part in BLOCKED_URL_PARTS):
-                await route.abort()
-                return
+            script = self.extractor.load_script(rule.extractor_script)
+            await ctx.add_init_script(script=script)
 
-            # Speed wins without breaking images:
-            # - keep images (you want them in index runs anyway)
-            # - block fonts/media (almost never needed for description)
-            rtype = (request.resource_type or "").lower()
-            if rtype in ("font", "media"):
-                await route.abort()
-                return
+            async def _route_handler(route, request):
+                url = (request.url or "").lower()
+                if any(part in url for part in BLOCKED_URL_PARTS):
+                    await route.abort()
+                    return
 
-            await route.continue_()
+                # Speed wins without breaking images:
+                # - keep images so they are harvested when available
+                # - block fonts/media (almost never needed for detail text)
+                rtype = (request.resource_type or "").lower()
+                if rtype in ("font", "media"):
+                    await route.abort()
+                    return
 
-        await ctx.route("**/*", _route_handler)
-        self._contexts[key] = ctx
-        return ctx
+                await route.continue_()
+
+            await ctx.route("**/*", _route_handler)
+            self._contexts[key] = ctx
+            return ctx
 
     async def close(self) -> None:
         for ctx in list(self._contexts.values()):
@@ -415,6 +490,7 @@ class ContextPool:
             except Exception:
                 pass
         self._contexts.clear()
+        self._context_locks.clear()
 
 
 def make_detail_payload(
@@ -514,24 +590,12 @@ async def scrape_one(
             flush=True,
         )
 
-        # --- ADDED: per-URL skip reasons (so "scraped=5" is explainable) ---
-        # v2: don't skip solely on short description if we harvested other useful signals (kv/jsonld/state/images).
-        kv_len = len((extracted.get("raw_kv") or [])) if isinstance(extracted, dict) else 0
-        jsonld_len = len((extracted.get("raw_jsonld") or [])) if isinstance(extracted, dict) else 0
-        state_len = len((extracted.get("raw_state_blobs") or [])) if isinstance(extracted, dict) else 0
-        imgs_len = len(images) if isinstance(images, list) else 0
-
-        has_other_signal = (kv_len + jsonld_len + state_len + imgs_len) > 0
-
-        if not desc and not has_other_signal:
-            print(f"⏭️ skip (no desc/no signals): {url}")
+        meaningful, reason = has_meaningful_detail(extracted, rule.min_desc_len)
+        if not meaningful:
+            print(f"⏭️ incomplete detail: {url} -> {reason}")
             return None
 
-        if rule.min_desc_len and len(desc) < rule.min_desc_len and not has_other_signal:
-            print(f"⏭️ skip (too short {len(desc)}<{rule.min_desc_len} and no signals): {url}")
-            return None
-        # ---------------------------------------------------------------
-
+        print(f"🧾 meaningful detail: {url} -> {reason}")
         return make_detail_payload(url, extracted)
     finally:
         try:
@@ -592,6 +656,8 @@ async def run_once(
     rules_file: str,
     global_concurrency: int,
     post_batch_size: int,
+    retry_attempts: int,
+    retry_delay_s: float,
 ) -> Tuple[int, int, Optional[int]]:
     """Returns (urls_seen, urls_scraped, last_id)."""
 
@@ -645,23 +711,35 @@ async def run_once(
             async def worker(u: str, rule: DomainRule) -> Optional[Dict[str, Any]]:
                 async with global_sem:
                     async with domain_sems[rule.domain]:
-                        try:
-                            payload = await scrape_one(pool, extractor, rule, u)
+                        attempts = max(1, min(5, int(retry_attempts)))
+                        last_error: Optional[str] = None
 
-                            # --- ADDED: per-URL success log (after scrape) ---
-                            if isinstance(payload, dict):
-                                items = payload.get("items") or []
-                                raw = ""
-                                if items and isinstance(items[0], dict):
-                                    raw = items[0].get("rawText") or ""
-                                raw_len = len(raw) if isinstance(raw, str) else 0
-                                print(f"✅ scraped: {u} (rawText_len={raw_len})")
-                            # ------------------------------------------------
+                        for attempt in range(1, attempts + 1):
+                            try:
+                                payload = await scrape_one(pool, extractor, rule, u)
+                                if isinstance(payload, dict):
+                                    items = payload.get("items") or []
+                                    raw = ""
+                                    if items and isinstance(items[0], dict):
+                                        raw = items[0].get("rawText") or ""
+                                    raw_len = len(raw) if isinstance(raw, str) else 0
+                                    print(f"✅ scraped: {u} (rawText_len={raw_len}, attempt={attempt})")
+                                    return payload
 
-                            return payload
-                        except Exception as e:
-                            print(f"❌ detail failed: {u} -> {e}")
-                            return None
+                                last_error = "no meaningful detail content"
+                            except Exception as e:
+                                last_error = str(e)
+
+                            if attempt < attempts:
+                                delay = max(0.0, float(retry_delay_s)) * attempt
+                                print(
+                                    f"↻ detail retry {attempt + 1}/{attempts}: {u} "
+                                    f"after {delay:.1f}s ({last_error})"
+                                )
+                                await asyncio.sleep(delay)
+
+                        print(f"❌ detail failed after {attempts} attempts: {u} -> {last_error}")
+                        return None
 
             payloads = await asyncio.gather(
                 *[asyncio.create_task(worker(u, rule)) for (u, rule) in final]
@@ -721,6 +799,20 @@ async def main_async(argv: List[str]) -> int:
     )
 
     parser.add_argument(
+        "--retry-attempts",
+        type=int,
+        default=int(os.getenv("DETAIL_RETRY_ATTEMPTS", "3")),
+        help="Maximum scrape attempts per listing within the current batch",
+    )
+
+    parser.add_argument(
+        "--retry-delay-s",
+        type=float,
+        default=float(os.getenv("DETAIL_RETRY_DELAY_S", "2.0")),
+        help="Base retry delay; retries use a small linear backoff",
+    )
+
+    parser.add_argument(
         "--drain",
         action="store_true",
         help="Keep scraping batches until the queue is empty",
@@ -742,6 +834,11 @@ async def main_async(argv: List[str]) -> int:
     total_done = 0
     last_id: Optional[int] = None
 
+    print(
+        f"DETAIL CONCURRENCY: {max(1, min(20, int(args.global_concurrency)))} | "
+        f"retry_attempts={max(1, min(5, int(args.retry_attempts)))}"
+    )
+
     while True:
         print(
             f"▶️ queue request: domain={args.queue_domain!r}, contains={args.queue_url_contains!r}, limit={queue_limit}"
@@ -757,6 +854,8 @@ async def main_async(argv: List[str]) -> int:
             rules_file=args.rules,
             global_concurrency=args.global_concurrency,
             post_batch_size=args.post_batch_size,
+            retry_attempts=args.retry_attempts,
+            retry_delay_s=args.retry_delay_s,
         )
 
         total_seen += seen

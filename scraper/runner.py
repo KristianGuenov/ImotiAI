@@ -6,7 +6,7 @@ from pathlib import Path
 import random
 import re
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
@@ -48,6 +48,12 @@ class ScrapeTarget:
     # pagination settings
     max_pages: int = 4000
     delay_ms: int = 1500
+
+    # Optional runtime pagination bounds.
+    # These default to None for normal targets and are used by the runner to
+    # split very large pagination targets (currently en.realestates.bg).
+    start_page: Optional[int] = None
+    end_page: Optional[int] = None
 
     # load-more settings (passed directly to content.js LoadMore.run)
     load_more: Dict[str, Any] = field(default_factory=dict)
@@ -93,6 +99,16 @@ class TargetsLoader:
                     mode=str(item.get("mode") or "extract_once").strip(),
                     max_pages=int(item.get("max_pages") or 25),
                     delay_ms=int(item.get("delay_ms") or 1500),
+                    start_page=(
+                        int(item["start_page"])
+                        if item.get("start_page") is not None
+                        else None
+                    ),
+                    end_page=(
+                        int(item["end_page"])
+                        if item.get("end_page") is not None
+                        else None
+                    ),
                     load_more=dict(item.get("load_more") or {}),
                     wait_until=str(
                         item.get("wait_until") or "domcontentloaded"
@@ -547,6 +563,10 @@ class PlaywrightExtractor:
         h = self._host_of(url)
         return h.endswith("property.bg") or h.endswith("www.property.bg")
 
+    def _is_realestatesbg(self, url: str) -> bool:
+        h = self._host_of(url)
+        return h.endswith("realestates.bg") or h.endswith("www.realestates.bg")
+
     def _strip_choose_prefix(self, url: str) -> str:
         parts = urlsplit(url)
         path = parts.path or ""
@@ -564,6 +584,8 @@ class PlaywrightExtractor:
             return self._imotiinfo_page_url(base_url, page_num)
         if self._is_propertybg(base_url):
             return self._propertybg_page_url(base_url, page_num)
+        if self._is_realestatesbg(base_url):
+            return self._realestatesbg_page_url(base_url, page_num)
         return None
 
     def _imotbg_page_url(self, base_url: str, page_num: int) -> str:
@@ -604,6 +626,16 @@ class PlaywrightExtractor:
 
     def _propertybg_page_url(self, base_url: str, page_num: int) -> str:
         """property.bg search paging uses `page=N` query param."""
+        parts = urlsplit(base_url)
+        q = dict(parse_qsl(parts.query, keep_blank_values=True))
+        q["page"] = str(max(1, int(page_num)))
+        new_query = urlencode(q, doseq=True)
+        return urlunsplit(
+            (parts.scheme, parts.netloc, parts.path, new_query, parts.fragment)
+        )
+
+    def _realestatesbg_page_url(self, base_url: str, page_num: int) -> str:
+        """en.realestates.bg paging uses the `page=N` query parameter."""
         parts = urlsplit(base_url)
         q = dict(parse_qsl(parts.query, keep_blank_values=True))
         q["page"] = str(max(1, int(page_num)))
@@ -907,8 +939,19 @@ class PlaywrightExtractor:
         last_id: Optional[int] = None
 
         try:
+            initial_url = target.url
+            if target.start_page is not None and int(target.start_page) > 1:
+                partition_start_url = self._manual_page_url(
+                    target.url, int(target.start_page)
+                )
+                if not partition_start_url:
+                    raise RuntimeError(
+                        f"pagination partitioning is not supported for {target.url}"
+                    )
+                initial_url = partition_start_url
+
             await page.goto(
-                target.url, wait_until=target.wait_until, timeout=target.timeout_ms
+                initial_url, wait_until=target.wait_until, timeout=target.timeout_ms
             )
             await page.wait_for_timeout(700)
             await self._ensure_extractor(page)
@@ -1188,6 +1231,14 @@ class PlaywrightExtractor:
             max_pages = max(1, min(20000, int(target.max_pages)))
             delay_ms = max(0, min(20_000, int(target.delay_ms)))
 
+            current_page_num = max(1, int(target.start_page or 1))
+            partition_end_page = (
+                max(current_page_num, int(target.end_page))
+                if target.end_page is not None
+                else None
+            )
+            display_max_page = partition_end_page or max_pages
+
             post_strategy = (target.post_strategy or "per_page").lower().strip()
             if post_strategy not in ("per_page", "per_target"):
                 post_strategy = "per_page"
@@ -1339,13 +1390,13 @@ class PlaywrightExtractor:
 
                 if post_strategy == "per_target":
                     print(
-                        f"[{target.name}] page={pages_visited}/{max_pages} items={item_count} "
+                        f"[{target.name}] page={current_page_num}/{display_max_page} items={item_count} "
                         f"new_unique={new_items_this_page} unique_total={len(seen_item_keys)} "
                         f"batch_pages={batch_pages} batch_items={len(batch_items)} url={page.url}"
                     )
                 else:
                     print(
-                        f"[{target.name}] page={pages_visited}/{max_pages} items={item_count} "
+                        f"[{target.name}] page={current_page_num}/{display_max_page} items={item_count} "
                         f"posted_pages={posts_done} last_id={last_id} url={page.url}"
                     )
 
@@ -1356,16 +1407,28 @@ class PlaywrightExtractor:
                 ):
                     await flush_batch(reason=f"reached_{batch_every}_pages")
 
+                # A runtime page partition deliberately stops at its assigned
+                # end page. This is a successful partition boundary, not a site end.
+                if (
+                    partition_end_page is not None
+                    and current_page_num >= partition_end_page
+                ):
+                    print(
+                        f"[{target.name}] STOP partition_end "
+                        f"page={current_page_num} url={page.url}"
+                    )
+                    break
+
                 if pages_visited >= max_pages:
                     raise RuntimeError(
                         f"incomplete_target: reached max_pages={max_pages} before natural end"
                     )
 
-                next_page_num = pages_visited + 1
+                next_page_num = current_page_num + 1
                 manual_next = self._manual_page_url(target.url, next_page_num)
 
                 if manual_next:
-                    if self._is_imotbg(target.url) and pages_visited == 1:
+                    if self._is_imotbg(target.url) and current_page_num == 1:
                         has_next = await self._has_next_control_imotbg(page)
                         if not has_next:
                             print(
@@ -1411,6 +1474,7 @@ class PlaywrightExtractor:
 
                 await page.wait_for_timeout(500)
                 await self._ensure_extractor(page)
+                current_page_num = next_page_num
 
                 # holmes.bg: wait for hydrated results after navigation
                 if self._is_holmesbg(target.url):
@@ -1452,6 +1516,22 @@ class PlaywrightExtractor:
 
 
 class ScrapeRunner:
+    # Extra target-level concurrency only for the domains that dominate runtime.
+    # All other domains stay at one active target at a time.
+    DOMAIN_TARGET_CONCURRENCY: Dict[str, int] = {
+        "imoti.com": 2,
+        "holmes.bg": 2,
+        "imoti.info": 2,
+        "en.realestates.bg": 4,
+    }
+
+    # en.realestates.bg has one very large pagination target, so target-level
+    # concurrency alone cannot help it. The runner creates four non-overlapping
+    # runtime page partitions for that one logical target.
+    PAGE_PARTITION_CONCURRENCY: Dict[str, int] = {
+        "en.realestates.bg": 4,
+    }
+
     def __init__(
         self,
         targets_file: str,
@@ -1459,12 +1539,14 @@ class ScrapeRunner:
         api_endpoint: str,
         api_key: str,
         headless: bool = True,
+        domain_concurrency: int = 1,
     ):
         self.targets_file = targets_file
         self.content_script_path = content_script_path
         self.api_endpoint = api_endpoint
         self.api_key = api_key
         self.headless = headless
+        self.domain_concurrency = max(1, int(domain_concurrency))
 
         self.loader = TargetsLoader(targets_file)
         self.extractor = PlaywrightExtractor(
@@ -1484,6 +1566,303 @@ class ScrapeRunner:
             ],
         )
 
+    def _target_worker_count(self, domain: str, items: List[ScrapeTarget]) -> int:
+        configured = int(self.DOMAIN_TARGET_CONCURRENCY.get(domain, 1))
+        if domain in self.PAGE_PARTITION_CONCURRENCY:
+            return max(1, configured)
+        return max(1, min(configured, len(items)))
+
+    def _split_page_target(
+        self,
+        target: ScrapeTarget,
+        parts: int,
+    ) -> List[ScrapeTarget]:
+        """Split one pagination target into non-overlapping runtime page ranges."""
+        parts = max(1, int(parts))
+        if parts == 1:
+            return [target]
+        if target.mode != "pagination":
+            raise ValueError(
+                f"Cannot page-partition non-pagination target '{target.name}' "
+                f"(mode={target.mode})"
+            )
+
+        first_page = max(1, int(target.start_page or 1))
+        last_page = max(first_page, int(target.end_page or target.max_pages))
+        total_pages = last_page - first_page + 1
+        parts = min(parts, total_pages)
+
+        base_size = total_pages // parts
+        remainder = total_pages % parts
+
+        out: List[ScrapeTarget] = []
+        cursor = first_page
+
+        for index in range(parts):
+            size = base_size + (1 if index < remainder else 0)
+            start_page = cursor
+            end_page = cursor + size - 1
+            cursor = end_page + 1
+
+            out.append(
+                replace(
+                    target,
+                    name=f"{target.name}__part{index + 1}",
+                    start_page=start_page,
+                    end_page=end_page,
+                )
+            )
+
+        return out
+
+    def _domain_work_items(
+        self,
+        domain: str,
+        items: List[ScrapeTarget],
+    ) -> Tuple[List[ScrapeTarget], bool]:
+        """Return runtime work items and whether they represent one logical target."""
+        partition_count = int(self.PAGE_PARTITION_CONCURRENCY.get(domain, 1))
+        if partition_count > 1:
+            if len(items) != 1:
+                raise ValueError(
+                    f"Page-partitioned domain '{domain}' must currently have exactly "
+                    f"one configured target; found {len(items)}"
+                )
+
+            parts = self._split_page_target(items[0], partition_count)
+            ranges = ", ".join(
+                f"{p.start_page}-{p.end_page}" for p in parts
+            )
+            print(f"[{domain}] PAGE PARTITIONS: {ranges}")
+            return parts, True
+
+        return list(items), False
+
+    async def _run_target(
+        self,
+        api: ApiClient,
+        target: ScrapeTarget,
+        browser: Browser,
+    ) -> bool:
+        print(f"=== {target.name} ===")
+        print(f"URL: {target.url}")
+        print(
+            f"Mode: {target.mode} | post_strategy: {target.post_strategy} | "
+            f"post_batch_pages: {target.post_batch_pages}"
+        )
+        if target.start_page is not None or target.end_page is not None:
+            print(
+                f"[{target.name}] RANGE "
+                f"{target.start_page or 1}-{target.end_page or target.max_pages}"
+            )
+
+        try:
+            posted = self._posted_sigs_by_target.setdefault(target.name, set())
+            seen_keys = self._seen_item_keys_by_target.setdefault(target.name, set())
+
+            pages_visited, posts_done, last_id = await self.extractor.scrape_target(
+                api,
+                target,
+                browser,
+                posted_signatures=posted,
+                seen_item_keys=seen_keys,
+            )
+            print(
+                f"DONE target={target.name} pages_visited={pages_visited} "
+                f"posts_done={posts_done} last_extraction_id={last_id}"
+            )
+            return True
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # Under concurrency a domain browser may be shared by multiple target
+            # contexts, so one target must never close/relaunch that browser while
+            # sibling targets are still using it. A browser-level failure therefore
+            # fails this target/domain safely; the lifecycle cycle will not reconcile.
+            print(f"FAILED target={target.name} err={exc}")
+            return False
+
+    async def _run_targets_bounded(
+        self,
+        api: ApiClient,
+        browser: Browser,
+        work_items: List[ScrapeTarget],
+        worker_count: int,
+    ) -> List[bool]:
+        """Run each work item exactly once with bounded same-domain concurrency."""
+        semaphore = asyncio.Semaphore(max(1, int(worker_count)))
+
+        async def guarded(target: ScrapeTarget) -> bool:
+            async with semaphore:
+                return await self._run_target(api, target, browser)
+
+        # Each target object appears exactly once in this gather. The semaphore
+        # dynamically keeps up to worker_count targets active, so faster workers
+        # naturally take the next waiting target without manual 50/50 splitting.
+        return await asyncio.gather(
+            *(guarded(target) for target in work_items)
+        )
+
+    async def _finalize_failed_cycle(
+        self,
+        api: ApiClient,
+        domain: str,
+        cycle_id: Optional[int],
+        *,
+        targets_expected: int,
+        targets_succeeded: int,
+        targets_failed: int,
+        abort_reason: str,
+    ) -> None:
+        if cycle_id is None:
+            return
+
+        remaining = max(
+            0,
+            int(targets_expected) - int(targets_succeeded) - int(targets_failed),
+        )
+        failed_total = max(int(targets_failed), 0) + remaining
+
+        try:
+            # Shield cycle finalization during Ctrl+C cancellation so a partially
+            # scraped domain cannot be left eligible for reconciliation.
+            result = await asyncio.shield(
+                api.complete_inventory_cycle(
+                    domain,
+                    cycle_id,
+                    success=False,
+                    targets_succeeded=int(targets_succeeded),
+                    targets_failed=int(failed_total),
+                    abort_reason=abort_reason,
+                )
+            )
+            print(
+                f"INVENTORY_CYCLE ABORTED domain={domain} "
+                f"cycle_id={cycle_id} status={result.get('status')}"
+            )
+        except Exception as exc:
+            print(
+                f"INVENTORY_CYCLE ABORT_FINALIZE_FAILED domain={domain} "
+                f"cycle_id={cycle_id} err={exc}"
+            )
+
+    async def _run_domain(
+        self,
+        p,
+        api: ApiClient,
+        domain: str,
+        items: List[ScrapeTarget],
+        domain_semaphore: asyncio.Semaphore,
+    ) -> Tuple[int, int]:
+        """Run one independent domain lifecycle inside the global domain semaphore."""
+        async with domain_semaphore:
+            cycle_id: Optional[int] = None
+            browser: Optional[Browser] = None
+
+            logical_expected = len(items)
+            logical_succeeded = 0
+            logical_failed = 0
+
+            try:
+                data = await api.start_inventory_cycle(domain, logical_expected)
+                cycle_id = int(data["id"])
+
+                work_items, partitioned_single_target = self._domain_work_items(
+                    domain, items
+                )
+                worker_count = self._target_worker_count(domain, work_items)
+
+                print(
+                    f"INVENTORY_CYCLE START domain={domain} "
+                    f"cycle_id={cycle_id} targets={logical_expected} "
+                    f"work_items={len(work_items)} target_workers={worker_count}"
+                )
+
+                # One browser process per active domain. Internal target workers use
+                # separate BrowserContexts in that browser.
+                browser = await self._launch_browser(p)
+
+                results = await self._run_targets_bounded(
+                    api,
+                    browser,
+                    work_items,
+                    worker_count,
+                )
+
+                if partitioned_single_target:
+                    # Four realestates page partitions are still one logical target.
+                    if all(results):
+                        logical_succeeded = 1
+                        logical_failed = 0
+                    else:
+                        logical_succeeded = 0
+                        logical_failed = 1
+                else:
+                    logical_succeeded = sum(1 for result in results if result)
+                    logical_failed = logical_expected - logical_succeeded
+
+                success = (
+                    logical_succeeded == logical_expected
+                    and logical_failed == 0
+                )
+
+                result = await api.complete_inventory_cycle(
+                    domain,
+                    cycle_id,
+                    success=success,
+                    targets_succeeded=logical_succeeded,
+                    targets_failed=logical_failed,
+                )
+                print(
+                    "INVENTORY_CYCLE END "
+                    f"domain={domain} cycle_id={cycle_id} "
+                    f"status={result.get('status')} "
+                    f"seen={result.get('listingsSeen')} "
+                    f"missing={result.get('listingsMissing')} "
+                    f"deactivated={result.get('listingsDeactivated')} "
+                    f"reconciled={result.get('reconciliationApplied')}"
+                )
+                if result.get("message"):
+                    print(f"  {result.get('message')}")
+
+                return logical_succeeded, logical_failed
+
+            except asyncio.CancelledError:
+                await self._finalize_failed_cycle(
+                    api,
+                    domain,
+                    cycle_id,
+                    targets_expected=logical_expected,
+                    targets_succeeded=logical_succeeded,
+                    targets_failed=logical_failed,
+                    abort_reason="runner_interrupted",
+                )
+                raise
+
+            except Exception as exc:
+                print(f"INVENTORY_CYCLE DOMAIN_ERROR domain={domain} err={exc}")
+                await self._finalize_failed_cycle(
+                    api,
+                    domain,
+                    cycle_id,
+                    targets_expected=logical_expected,
+                    targets_succeeded=logical_succeeded,
+                    targets_failed=logical_failed,
+                    abort_reason="domain_runner_exception",
+                )
+                return logical_succeeded, max(
+                    logical_failed,
+                    logical_expected - logical_succeeded,
+                )
+
+            finally:
+                if browser is not None:
+                    try:
+                        await browser.close()
+                    except Exception:
+                        pass
+
     async def run(self, only: Optional[str] = None) -> None:
         all_targets = self.loader.load()
 
@@ -1496,198 +1875,118 @@ class ScrapeRunner:
 
         api = ApiClient(self.api_endpoint, self.api_key)
 
-        # Group targets by domain while preserving the order in targets.yml.
-        # Full runs process one complete domain at a time:
-        #   start cycle -> scrape all domain targets -> finalize cycle -> next domain.
         domain_targets: Dict[str, List[ScrapeTarget]] = {}
-        for t in targets:
-            d = canonical_domain(t.url)
-            if not d:
-                raise ValueError(f"Could not determine domain for target '{t.name}': {t.url}")
-            domain_targets.setdefault(d, []).append(t)
+        for target in targets:
+            domain = canonical_domain(target.url)
+            if not domain:
+                raise ValueError(
+                    f"Could not determine domain for target "
+                    f"'{target.name}': {target.url}"
+                )
+            domain_targets.setdefault(domain, []).append(target)
 
         async with async_playwright() as p:
-            browser = await self._launch_browser(p)
-            total_ok = 0
-            total_fail = 0
-
-            async def run_one_target(t: ScrapeTarget) -> bool:
-                nonlocal browser, total_ok, total_fail
-
-                print(f"=== {t.name} ===")
-                print(f"URL: {t.url}")
-                print(
-                    f"Mode: {t.mode} | post_strategy: {t.post_strategy} | "
-                    f"post_batch_pages: {t.post_batch_pages}"
-                )
-
-                attempts = 0
-                while attempts < 2:
-                    attempts += 1
-                    try:
-                        posted = self._posted_sigs_by_target.setdefault(t.name, set())
-                        seen_keys = self._seen_item_keys_by_target.setdefault(t.name, set())
-
-                        pages_visited, posts_done, last_id = await self.extractor.scrape_target(
-                            api,
-                            t,
-                            browser,
-                            posted_signatures=posted,
-                            seen_item_keys=seen_keys,
-                        )
-                        total_ok += 1
-                        print(
-                            f"DONE target={t.name} pages_visited={pages_visited} "
-                            f"posts_done={posts_done} last_extraction_id={last_id}"
-                        )
-                        return True
-
-                    except Exception as e:
-                        msg = str(e)
-                        if (
-                            "Target page, context or browser has been closed" in msg
-                            and attempts < 2
-                        ):
-                            print("Browser closed/crashed. Relaunching and retrying once...")
-                            try:
-                                try:
-                                    await browser.close()
-                                except Exception:
-                                    pass
-                                browser = await self._launch_browser(p)
-                            except Exception as e2:
-                                print(f"Browser relaunch failed: {e2}")
-                                break
-                            continue
-
-                        print(f"FAILED target={t.name} err={e}")
-                        break
-
-                total_fail += 1
-                return False
-
             try:
-                # --only is a smoke/debug run. It never creates or reconciles a
-                # domain inventory cycle because one target does not prove full coverage.
+                # --only remains a smoke/debug run and never reconciles inventory.
                 if only:
-                    print("PARTIAL RUN (--only): inventory reconciliation is disabled for safety.")
-                    await run_one_target(targets[0])
-                    print(f"SUMMARY ok={total_ok} fail={total_fail}")
+                    print(
+                        "PARTIAL RUN (--only): inventory reconciliation is "
+                        "disabled for safety."
+                    )
+                    browser = await self._launch_browser(p)
+                    try:
+                        ok = await self._run_target(api, targets[0], browser)
+                    finally:
+                        try:
+                            await browser.close()
+                        except Exception:
+                            pass
+
+                    print(f"SUMMARY ok={1 if ok else 0} fail={0 if ok else 1}")
                     return
 
-                # Full run: each site's inventory cycle is completely independent.
-                # No future domain gets a RUNNING row until we actually reach it.
-                for domain, items in domain_targets.items():
-                    cycle_id: Optional[int] = None
-                    succeeded = 0
-                    failed = 0
+                configured_target_workers = sum(
+                    self._target_worker_count(domain, items)
+                    for domain, items in domain_targets.items()
+                )
+                domain_limit = min(
+                    self.domain_concurrency,
+                    max(1, len(domain_targets)),
+                )
 
-                    try:
-                        data = await api.start_inventory_cycle(domain, len(items))
-                        cycle_id = int(data["id"])
-                        print(
-                            f"INVENTORY_CYCLE START domain={domain} "
-                            f"cycle_id={cycle_id} targets={len(items)}"
-                        )
+                print(
+                    f"DOMAIN CONCURRENCY: {domain_limit} | "
+                    f"domains={len(domain_targets)} | targets={len(targets)} | "
+                    f"configured_peak_target_workers={configured_target_workers}"
+                )
 
-                        for t in items:
-                            target_ok = await run_one_target(t)
-                            if target_ok:
-                                succeeded += 1
-                            else:
-                                failed += 1
+                domain_semaphore = asyncio.Semaphore(domain_limit)
 
-                        success = succeeded == len(items) and failed == 0
-                        result = await api.complete_inventory_cycle(
+                tasks = [
+                    asyncio.create_task(
+                        self._run_domain(
+                            p,
+                            api,
                             domain,
-                            cycle_id,
-                            success=success,
-                            targets_succeeded=succeeded,
-                            targets_failed=failed,
-                        )
-                        print(
-                            "INVENTORY_CYCLE END "
-                            f"domain={domain} cycle_id={cycle_id} status={result.get('status')} "
-                            f"seen={result.get('listingsSeen')} missing={result.get('listingsMissing')} "
-                            f"deactivated={result.get('listingsDeactivated')} "
-                            f"reconciled={result.get('reconciliationApplied')}"
-                        )
-                        if result.get("message"):
-                            print(f"  {result.get('message')}")
+                            items,
+                            domain_semaphore,
+                        ),
+                        name=f"domain:{domain}",
+                    )
+                    for domain, items in domain_targets.items()
+                ]
 
-                    except (asyncio.CancelledError, KeyboardInterrupt):
-                        # Ctrl+C / task cancellation: explicitly close only the CURRENT
-                        # domain cycle. No reconciliation is applied to an aborted cycle.
-                        if cycle_id is not None:
-                            try:
-                                remaining = max(0, len(items) - succeeded)
-                                result = await api.complete_inventory_cycle(
-                                    domain,
-                                    cycle_id,
-                                    success=False,
-                                    targets_succeeded=succeeded,
-                                    targets_failed=max(failed, remaining),
-                                    abort_reason="runner_interrupted",
-                                )
-                                print(
-                                    f"INVENTORY_CYCLE ABORTED domain={domain} "
-                                    f"cycle_id={cycle_id} status={result.get('status')}"
-                                )
-                            except Exception as abort_exc:
-                                print(
-                                    f"INVENTORY_CYCLE ABORT_FINALIZE_FAILED domain={domain} "
-                                    f"cycle_id={cycle_id} err={abort_exc}"
-                                )
-                        raise
+                try:
+                    domain_results = await asyncio.gather(*tasks)
+                except (asyncio.CancelledError, KeyboardInterrupt):
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    raise
 
-                    except Exception as exc:
-                        # Unexpected domain-level failure. Close this domain as failed/aborted
-                        # when possible. Future domains have not been started yet.
-                        if cycle_id is not None:
-                            try:
-                                remaining = max(0, len(items) - succeeded)
-                                result = await api.complete_inventory_cycle(
-                                    domain,
-                                    cycle_id,
-                                    success=False,
-                                    targets_succeeded=succeeded,
-                                    targets_failed=max(failed, remaining),
-                                    abort_reason="domain_runner_exception",
-                                )
-                                print(
-                                    f"INVENTORY_CYCLE ABORTED domain={domain} "
-                                    f"cycle_id={cycle_id} status={result.get('status')} err={exc}"
-                                )
-                            except Exception as abort_exc:
-                                print(
-                                    f"INVENTORY_CYCLE FINALIZE_FAILED domain={domain} "
-                                    f"cycle_id={cycle_id} err={abort_exc}; original_err={exc}"
-                                )
-                        else:
-                            print(f"INVENTORY_CYCLE START_FAILED domain={domain} err={exc}")
-
+                total_ok = sum(ok for ok, _fail in domain_results)
+                total_fail = sum(fail for _ok, fail in domain_results)
                 print(f"SUMMARY ok={total_ok} fail={total_fail}")
 
             finally:
                 await api.close()
-                try:
-                    await browser.close()
-                except Exception:
-                    pass
 
 
 def main():
     targets_file = os.getenv("TARGETS_FILE", "targets.yml")
     content_script_path = os.getenv("CONTENT_SCRIPT_PATH", "content.js")
-    api_endpoint = os.getenv("API_ENDPOINT", "http://localhost:8787/api/v1/extractions")
+    api_endpoint = os.getenv(
+        "API_ENDPOINT",
+        "http://localhost:8787/api/v1/extractions",
+    )
     api_key = os.getenv("API_KEY", "")
 
-    parser = argparse.ArgumentParser(description="Run index/list extraction targets.")
-    parser.add_argument("--only", help="Run only a single target name", default=None)
+    env_domain_concurrency = int(
+        os.getenv("SCRAPER_DOMAIN_CONCURRENCY", "1") or "1"
+    )
+
+    parser = argparse.ArgumentParser(
+        description="Run index/list extraction targets."
+    )
+    parser.add_argument(
+        "--only",
+        help="Run only a single target name",
+        default=None,
+    )
     parser.add_argument(
         "--headful",
         action="store_true",
         help="Run with a visible browser (headless=false)",
+    )
+    parser.add_argument(
+        "--domain-concurrency",
+        type=int,
+        default=env_domain_concurrency,
+        help=(
+            "Maximum number of domains to scrape concurrently "
+            "(default: SCRAPER_DOMAIN_CONCURRENCY or 1)"
+        ),
     )
     args = parser.parse_args()
 
@@ -1697,6 +1996,7 @@ def main():
         api_endpoint=api_endpoint,
         api_key=api_key,
         headless=not args.headful,
+        domain_concurrency=args.domain_concurrency,
     )
 
     asyncio.run(runner.run(only=args.only))
