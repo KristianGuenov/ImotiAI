@@ -8,11 +8,11 @@
       "updatedAt": "2026-01-23T00:02:13.444Z"
     },
     "bazar.bg": {
-      "listingLinkPattern": "/obiava/",
+      "listingLinkPattern": "/obiava-",
       "selectorCards": [
-        "div.card-body"
+        "div.listItemContainer"
       ],
-      "updatedAt": "2026-01-23T01:02:40.653Z"
+      "updatedAt": "2026-09-09T21:20:00.000Z"
     },
     "imoteka.bg": {
       "listingLinkPattern": null,
@@ -68,6 +68,13 @@
       ],
       "updatedAt": "2026-01-26T03:37:30.871Z"
     },
+    "home2u.bg": {
+      "listingLinkPattern": "/property/",
+      "selectorCards": [
+        "article",
+        ".property-card"
+      ]
+    },
     "www.bulgarianproperties.com": {
       "listingLinkPattern": null,
       "selectorCards": [
@@ -104,19 +111,40 @@
       "updatedAt": "2026-01-30T01:01:46.337Z"
     },
     "www.era.bg": {
-      "listingLinkPattern": "/properties/",
+      "listingLinkPattern": "/imoti/oferta/",
       "nextPageSelector": "button#TemplateHolder\\|c0\\|c3\\|c5\\|c4\\|c3\\|c0\\|Root\\|c6",
       "selectorCards": [
         "div.Content"
       ],
       "updatedAt": "2026-01-31T02:35:48.017Z"
     },
-    "www.property.bg": {
+    "www.alo.bg": {
       "listingLinkPattern": null,
+      "nextPageSelector": "a[rel='next']",
       "selectorCards": [
-        "div.grid-container"
+        "div.listtop-item"
+      ]
+    },
+    "www.olx.bg": {
+      "listingLinkPattern": "/d/ad/",
+      "nextPageSelector": "a[data-testid='pagination-forward']",
+      "selectorCards": [
+        "div[data-cy='l-card']",
+        "div[data-testid='l-card']"
+      ]
+    },
+    "revolution-estate.bg": {
+      "listingLinkPattern": "/imot/",
+      "selectorCards": [
+        ".col-property"
+      ]
+    },
+    "www.property.bg": {
+      "listingLinkPattern": "/property-",
+      "selectorCards": [
+        "div.panel.rel.shadow.offer"
       ],
-      "updatedAt": "2026-01-31T20:58:03.656Z"
+      "updatedAt": "2026-09-09T21:30:00.000Z"
     },
     "ues.bg": {
       "listingLinkPattern": null,
@@ -132,6 +160,37 @@
       ],
       "listingLinkPattern": null,
       "updatedAt": "2026-02-10T11:00:13.229Z"
+    },
+    "sales.bcpea.org": {
+      "listingLinkPattern": "/properties/",
+      "selectorCards": [
+        "div.item__container"
+      ],
+      "selectorTitle": ".item__group",
+      "selectorImages": "img",
+      "nextPageSelector": "a[rel='next']"
+    },
+    "estate-sales.uslugi.io": {
+      "listingLinkPattern": "/upcoming-public/view/",
+      "selectorCards": ["table.table tbody tr"]
+    },
+    "estates.ubb.bg": {
+      "listingLinkPattern": "/sales/",
+      "selectorCards": ["div.estates-list-row"],
+      "nextPageSelector": "a.arrow-holder"
+    },
+    "bbr.bg": {
+      "listingLinkPattern": "/bg/nedvijimi-imoti/",
+      "selectorCards": ["div.presentation-card"]
+    },
+    "sofia.bg": {
+      "listingLinkPattern": "/w/",
+      "selectorCards": ["div.row.obzov"],
+      "nextPageSelector": "a[title='Следваща страница']"
+    },
+    "plovdiv.bg": {
+      "listingLinkPattern": "/wp-content/uploads/",
+      "selectorCards": ["a.download[href*='/wp-content/uploads/']"]
     }
   },
   "updatedAt": "2026-02-10T11:00:13.453236+00:00",

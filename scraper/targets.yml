@@ -154,16 +154,6 @@
   post_strategy: per_target
   post_batch_pages: 50
 
-- name: imot_com_sale10
-  url: "https://www.imoti.com/prodazhbi/grad-sofiya?sraion=39~40~41~42~120~44~45~46~47~121~49~"
-  mode: pagination
-  max_pages: 2750
-  delay_ms: 1500
-  wait_until: domcontentloaded
-  timeout_ms: 45000
-  post_strategy: per_target
-  post_batch_pages: 50
-
 - name: imot_com_sale11
   url: "https://www.imoti.com/prodazhbi/grad-sofiya?sraion=48~50~51~52~53~155~127~156~128~54~55~56~57~"
   mode: pagination
@@ -305,8 +295,9 @@
   post_batch_pages: 50
 
 - name: property_bg_sale
-  url: "https://www.property.bg/search/index.php?country_id=1&sregion=0&stown=0&form_currency_select=EUR&minprice=&maxprice=&action=1&advance_search=1&searchform=1&advance=1&tab=1&spredlog=innear&csel=&hmsf=1&page=1"
+  url: "https://www.property.bg/sales/bulgaria/selection/"
   mode: pagination
+  listing_url_regex: "^https://www\\.property\\.bg/property-[0-9]+-.+/$"
   max_pages: 500
   delay_ms: 1500
   wait_until: domcontentloaded
@@ -323,18 +314,196 @@
   timeout_ms: 20000
   post_strategy: per_target
   post_batch_pages: 50
+  listing_url_regex: '^https://en\.realestates\.bg/[0-9]+$'
 
-- name: era_bg_sale
-  url: "https://www.era.bg/properties/sell?qs=1&SearchKeyword="
+# Realestates.bg is ALO's English catalogue. Cover every concrete property
+# category nationwide; omit demand/service categories such as
+# "looking to buy" because they are advertisements rather than properties.
+- name: realestates_bg_sale_houses
+  url: "https://en.realestates.bg/obiavi/imoti-prodajbi/kashti-vili/?qnbc=1"
   mode: pagination
-  max_pages: 500
-  delay_ms: 1500
-  wait_until: domcontentloaded
-  timeout_ms: 45000
+  max_pages: 5000
+  delay_ms: 1000
   post_strategy: per_target
   post_batch_pages: 50
+  listing_url_regex: '^https://en\.realestates\.bg/[0-9]+$'
+
+- name: realestates_bg_sale_commercial
+  url: "https://en.realestates.bg/obiavi/imoti-prodajbi/magazini-ofisi/?qnbc=1"
+  mode: pagination
+  max_pages: 2000
+  delay_ms: 1000
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://en\.realestates\.bg/[0-9]+$'
+
+- name: realestates_bg_sale_building_land
+  url: "https://en.realestates.bg/obiavi/imoti-prodajbi/parceli-za-zastroiavane-investicionni-proekti/?qnbc=1"
+  mode: pagination
+  max_pages: 5000
+  delay_ms: 1000
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://en\.realestates\.bg/[0-9]+$'
+
+- name: realestates_bg_sale_agricultural_land
+  url: "https://en.realestates.bg/obiavi/imoti-prodajbi/zemedelska-zemia-gradini-lozia-gora/?qnbc=1"
+  mode: pagination
+  max_pages: 2000
+  delay_ms: 1000
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://en\.realestates\.bg/[0-9]+$'
+
+- name: realestates_bg_sale_industrial
+  url: "https://en.realestates.bg/obiavi/imoti-prodajbi/promishleni-pomeshtenia-skladove/?qnbc=1"
+  mode: pagination
+  max_pages: 1000
+  delay_ms: 1000
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://en\.realestates\.bg/[0-9]+$'
+
+- name: realestates_bg_sale_garages
+  url: "https://en.realestates.bg/obiavi/imoti-prodajbi/garaji-parkomesta/?qnbc=1"
+  mode: pagination
+  max_pages: 1000
+  delay_ms: 1000
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://en\.realestates\.bg/[0-9]+$'
+
+- name: realestates_bg_sale_hotels
+  url: "https://en.realestates.bg/obiavi/imoti-prodajbi/hoteli-moteli/?qnbc=1"
+  mode: pagination
+  max_pages: 500
+  delay_ms: 1000
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://en\.realestates\.bg/[0-9]+$'
+
+- name: realestates_bg_sale_restaurants
+  url: "https://en.realestates.bg/obiavi/imoti-prodajbi/zavedenia/?qnbc=1"
+  mode: pagination
+  max_pages: 500
+  delay_ms: 1000
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://en\.realestates\.bg/[0-9]+$'
+
+- name: realestates_bg_sale_other
+  url: "https://en.realestates.bg/obiavi/imoti-prodajbi/drugi-imoti/?qnbc=1"
+  mode: pagination
+  max_pages: 500
+  delay_ms: 1000
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://en\.realestates\.bg/[0-9]+$'
+
+- name: realestates_bg_rent_apartments
+  url: "https://en.realestates.bg/obiavi/imoti-naemi/apartamenti/?qnbc=1"
+  mode: pagination
+  max_pages: 5000
+  delay_ms: 1000
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://en\.realestates\.bg/[0-9]+$'
+
+- name: realestates_bg_rent_houses
+  url: "https://en.realestates.bg/obiavi/imoti-naemi/kashti-vili/?qnbc=1"
+  mode: pagination
+  max_pages: 2000
+  delay_ms: 1000
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://en\.realestates\.bg/[0-9]+$'
+
+- name: realestates_bg_rent_commercial
+  url: "https://en.realestates.bg/obiavi/imoti-naemi/magazini-ofisi/?qnbc=1"
+  mode: pagination
+  max_pages: 2000
+  delay_ms: 1000
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://en\.realestates\.bg/[0-9]+$'
+
+- name: realestates_bg_rent_land
+  url: "https://en.realestates.bg/obiavi/imoti-naemi/parceli-tereni/?qnbc=1"
+  mode: pagination
+  max_pages: 1000
+  delay_ms: 1000
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://en\.realestates\.bg/[0-9]+$'
+
+- name: realestates_bg_rent_industrial
+  url: "https://en.realestates.bg/obiavi/imoti-naemi/promishleni-pomeshtenia-skladove/?qnbc=1"
+  mode: pagination
+  max_pages: 1000
+  delay_ms: 1000
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://en\.realestates\.bg/[0-9]+$'
+
+- name: realestates_bg_rent_garages
+  url: "https://en.realestates.bg/obiavi/imoti-naemi/garaji-parkingi-parkomesta/?qnbc=1"
+  mode: pagination
+  max_pages: 1000
+  delay_ms: 1000
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://en\.realestates\.bg/[0-9]+$'
+
+- name: realestates_bg_rent_hotels
+  url: "https://en.realestates.bg/obiavi/imoti-naemi/hoteli-pochivni-stancii/?qnbc=1"
+  mode: pagination
+  max_pages: 500
+  delay_ms: 1000
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://en\.realestates\.bg/[0-9]+$'
+
+- name: realestates_bg_rent_hourly_rooms
+  url: "https://en.realestates.bg/obiavi/imoti-naemi/stai-pochasov-naem/?qnbc=1"
+  mode: pagination
+  max_pages: 1000
+  delay_ms: 1000
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://en\.realestates\.bg/[0-9]+$'
+
+- name: realestates_bg_rent_roommates
+  url: "https://en.realestates.bg/obiavi/imoti-naemi/stai-sakvartiranti/?qnbc=1"
+  mode: pagination
+  max_pages: 1000
+  delay_ms: 1000
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://en\.realestates\.bg/[0-9]+$'
+
+- name: realestates_bg_rent_restaurants
+  url: "https://en.realestates.bg/obiavi/imoti-naemi/zavedenia/?qnbc=1"
+  mode: pagination
+  max_pages: 500
+  delay_ms: 1000
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://en\.realestates\.bg/[0-9]+$'
+
+- name: era_inventory_sitemap
+  url: "https://era.bg/__sitemap__/offers.xml"
+  mode: sitemap
+  authoritative_domain_inventory: true
+  listing_url_regex: '^https://era\.bg/imoti/oferta/'
+  min_items: 1000
+  max_sitemaps: 2
+  post_batch_items: 1000
+  timeout_ms: 90000
 
 - name: realistimo_bg_sale
+  # robots.txt prohibits automated scraping/data mining without prior written
+  # permission. Enable only after that permission is documented.
+  enabled: false
   url: "https://realistimo.com/bg/buy/sofia-oblast-bg/?addressIds%5B0%5D=4668&currency=EUR"
   mode: pagination
   max_pages: 250
@@ -367,6 +536,10 @@
 - name: mirela_bg_sale
   url: "https://www.mirela.bg/index.php?p=offer_list&order_by=1&type=1&ac_s=&ac_v=&map=28.223876953125004%7C45.89000815866184%7C23.060302734375004%7C39.30029918615029%7C7&price_from=&price_to=&area_from=&area_to=&floor_from=&floor_to=&bedrooms=&bathrooms=&sea_side=&has_upkeep=&yearround_use=&page=1"
   mode: pagination
+  listing_url_regex: "^https://www\\.mirela\\.bg/prodazhbi/.+-[0-9]+$"
+  # Direct probes return a synthetic 520 while the current browser-rendered
+  # inventory pages remain usable. Page membership is the live signal here.
+  validation_mode: source
   max_pages: 100
   delay_ms: 1500
   wait_until: domcontentloaded
@@ -757,12 +930,14 @@
 - name: domaza_bg_sale
   url: "https://www.domaza.bg/%D0%BD%D0%B5%D0%B4%D0%B2%D0%B8%D0%B6%D0%B8%D0%BC%D0%B8_%D0%B8%D0%BC%D0%BE%D1%82%D0%B8/_page/1/"
   mode: pagination
-  max_pages: 40
-  delay_ms: 1500
+  max_pages: 1000
+  # robots.txt publishes Crawl-delay: 10.
+  delay_ms: 10000
   wait_until: domcontentloaded
   timeout_ms: 45000
   post_strategy: per_target
   post_batch_pages: 50
+  listing_url_regex: '^https://www\.domaza\.bg/.+-[0-9]+-[0-9]+-p/$'
 
 - name: arcoreal_bg_sale
   url: "https://arcoreal.bg/%D0%BE%D1%84%D0%B5%D1%80%D1%82%D0%B8?t=2&ca=-1&pfr=&pto=&afr=&ato=&ffr=-100&fto=100&country-name=1&c=1&l%5B%5D=&page=1&limit=50"
@@ -773,16 +948,21 @@
   timeout_ms: 45000
   post_strategy: per_target
   post_batch_pages: 50
+  listing_url_regex: '^https://arcoreal\.bg/.+/[^/]+-[0-9]+$'
 
 - name: address_bg_sale
   url: "https://address.bg/sale"
-  mode: pagination
+  # Address embeds its complete active paginator as structured JSON in the
+  # server-rendered HTML. The HTTP inventory adapter fetches every explicit
+  # page and verifies that the requested page number was returned.
+  mode: http_inventory
   max_pages: 1000
-  delay_ms: 8000
-  wait_until: domcontentloaded
-  timeout_ms: 45000
+  min_items: 10000
+  delay_ms: 150
+  timeout_ms: 60000
   post_strategy: per_target
-  post_batch_pages: 50
+  post_batch_items: 500
+  listing_url_regex: '^https://address\.bg/.+-offer[0-9]+$'
 
 - name: imoteka_bg_sale
   url: "https://imoteka.bg/sale"
@@ -796,8 +976,10 @@
   timeout_ms: 15000
   post_batch_pages: 50
   max_pages: 1000
+  listing_url_regex: '^https://imoteka\.bg/.+-offer[0-9]+$'
 
 - name: imoti_info_targovishte
+  enabled: false
   url: "https://imoti.info/prodazhbi/grad-targovishte"
   mode: pagination
   max_pages: 100
@@ -806,6 +988,7 @@
   delay_ms: 1500
 
 - name: imot_info_big1
+  enabled: false
   url: "https://imoti.info/prodazhbi/grad-sofiya?craion=108&craion=107&craion=106&craion=20&craion=6195&craion=19&craion=18&craion=17&craion=6101&craion=105&craion=15&craion=144&craion=14"
   mode: pagination
   max_pages: 100
@@ -814,6 +997,7 @@
   delay_ms: 1500
 
 - name: imot_info_big2
+  enabled: false
   url: "https://imoti.info/prodazhbi/grad-sofiya?craion=16&craion=13&craion=104&craion=11&craion=10&craion=103&craion=102&craion=9"
   mode: pagination
   max_pages: 100
@@ -822,6 +1006,7 @@
   delay_ms: 1500
 
 - name: imot_info_big3
+  enabled: false
   url: "https://imoti.info/prodazhbi/grad-sofiya?craion=101&craion=8&craion=7&craion=6192&craion=5&craion=4&craion=3&craion=86&craion=1"
   mode: pagination
   max_pages: 100
@@ -830,6 +1015,7 @@
   delay_ms: 1500
 
 - name: imot_info_big4
+  enabled: false
   url: "https://imoti.info/prodazhbi/grad-sofiya?craion=2&craion=6"
   mode: pagination
   max_pages: 100
@@ -838,6 +1024,7 @@
   delay_ms: 1500
 
 - name: imot_info_big5
+  enabled: false
   url: "https://imoti.info/prodazhbi/grad-sofiya/malinova-dolina"
   mode: pagination
   max_pages: 100
@@ -846,6 +1033,7 @@
   delay_ms: 1500
 
 - name: imot_info_big6
+  enabled: false
   url: "https://imoti.info/prodazhbi/grad-sofiya/tsentar/apartamenti"
   mode: pagination
   max_pages: 100
@@ -854,6 +1042,7 @@
   delay_ms: 1500
 
 - name: imot_info_big7
+  enabled: false
   url: "https://imoti.info/prodazhbi/grad-sofiya/tsentar/biznes-pomeshtenya"
   mode: pagination
   max_pages: 100
@@ -862,6 +1051,7 @@
   delay_ms: 1500
 
 - name: imot_info_big8
+  enabled: false
   url: "https://imoti.info/prodazhbi/zemi?area=&price=&price1=50000"
   mode: pagination
   max_pages: 100
@@ -870,6 +1060,7 @@
   delay_ms: 1500
 
 - name: imot_info_big9
+  enabled: false
   url: "https://imoti.info/prodazhbi/zemi?area=&price=50000"
   mode: pagination
   max_pages: 100
@@ -878,6 +1069,7 @@
   delay_ms: 1500
 
 - name: imot_info_big10
+  enabled: false
   url: "https://imoti.info/prodazhbi/grad-sofiya/tsentar/partseli"
   mode: pagination
   max_pages: 100
@@ -886,6 +1078,7 @@
   delay_ms: 1500
 
 - name: imot_info_big11
+  enabled: false
   url: "https://imoti.info/prodazhbi/grad-sofiya?craion=113&craion=112&craion=111&craion=26&craion=110&craion=32&craion=109&craion=148&craion=21&craion=22&craion=25&craion=24&craion=23"
   mode: pagination
   max_pages: 100
@@ -894,6 +1087,7 @@
   delay_ms: 1500
 
 - name: imot_info_big12
+  enabled: false
   url: "https://imoti.info/prodazhbi/grad-sofiya?craion=29&craion=28&craion=115&craion=114&craion=27"
   mode: pagination
   max_pages: 100
@@ -902,6 +1096,7 @@
   delay_ms: 1500
 
 - name: imot_info_big13
+  enabled: false
   url: "https://imoti.info/prodazhbi/grad-sofiya?craion=41&craion=39&craion=38&craion=37&craion=36&craion=35&craion=34&craion=33&craion=117&craion=116&craion=31&craion=30"
   mode: pagination
   max_pages: 100
@@ -910,6 +1105,7 @@
   delay_ms: 1500
 
 - name: imot_info_big14
+  enabled: false
   url: "https://imoti.info/prodazhbi/grad-sofiya?craion=119&craion=43&craion=42&craion=40"
   mode: pagination
   max_pages: 100
@@ -918,6 +1114,7 @@
   delay_ms: 1500
 
 - name: imot_info_big15
+  enabled: false
   url: "https://imoti.info/prodazhbi/grad-sofiya?craion=51&craion=50&craion=121&craion=48&craion=47&craion=46&craion=45&craion=44&craion=120"
   mode: pagination
   max_pages: 100
@@ -926,6 +1123,7 @@
   delay_ms: 1500
 
 - name: imot_info_big16
+  enabled: false
   url: "https://imoti.info/prodazhbi/grad-sofiya?craion=6136&craion=57&craion=56&craion=55&craion=54&craion=128&craion=156&craion=127&craion=155&craion=53&craion=52&craion=49"
   mode: pagination
   max_pages: 100
@@ -934,6 +1132,7 @@
   delay_ms: 1500
 
 - name: imot_info_big17
+  enabled: false
   url: "https://imoti.info/prodazhbi/grad-sofiya?craion=68&craion=67&craion=66&craion=65&craion=157&craion=64&craion=63&craion=62&craion=61&craion=60&craion=132&craion=131&craion=59&craion=58&craion=130&craion=129"
   mode: pagination
   max_pages: 100
@@ -942,6 +1141,7 @@
   delay_ms: 1500
 
 - name: imot_info_big18
+  enabled: false
   url: "https://imoti.info/prodazhbi/grad-sofiya?craion=4136&craion=133&craion=4097&craion=4065&craion=4062&craion=4056&craion=4036&craion=4034&craion=4030&craion=4029&craion=4020&craion=4009&craion=5457&craion=3999&craion=3998&craion=3995&craion=3990&craion=3988&craion=3980&craion=3970&craion=3968&craion=3966&craion=3977"
   mode: pagination
   max_pages: 100
@@ -950,6 +1150,7 @@
   delay_ms: 1500
 
 - name: imot_info_big19
+  enabled: false
   url: "https://imoti.info/prodazhbi/grad-sofiya?craion=3846&craion=98&craion=3832&craion=6193&craion=97&craion=96&craion=95&craion=93&craion=139&craion=91&craion=90&craion=89&craion=88&craion=87&craion=138&craion=85&craion=84&craion=82&craion=79&craion=137&craion=80&craion=81&craion=77&craion=76"
   mode: pagination
   max_pages: 100
@@ -958,6 +1159,7 @@
   delay_ms: 1500
 
 - name: imot_info_big20
+  enabled: false
   url: "https://imoti.info/prodazhbi/grad-sofiya?craion=78&craion=75&craion=74&craion=73&craion=136&craion=135&craion=72&craion=134&craion=160&craion=71&craion=70&craion=69"
   mode: pagination
   max_pages: 100
@@ -966,6 +1168,7 @@
   delay_ms: 1500
 
 - name: imot_info_big21
+  enabled: false
   url: "https://imoti.info/prodazhbi/grad-sofiya?craion=3951&craion=3948&craion=3942&craion=3922&craion=3913&craion=3905&craion=3904&craion=3901&craion=3890&craion=3872&craion=3858&craion=154&craion=5136&craion=6198&craion=5133&craion=126&craion=124&craion=123&craion=6197&craion=122&craion=153&craion=152&craion=6196&craion=147&craion=146&craion=3835&craion=6194&craion=100&craion=140&craion=6193&craion=97&craion=96"
   mode: pagination
   max_pages: 100
@@ -981,8 +1184,10 @@
   post_batch_pages: 50
   delay_ms: 1500
 
-- name: bazar_bg_sofia_sale
+- name: bazar_bg_sale
   url: "https://bazar.bg/obiavi/prodazhba-imoti"
+  mode: pagination
+  listing_url_regex: "^https://bazar\\.bg/obiava-[0-9]+/"
   max_pages: 3000
   post_strategy: per_target
   post_batch_pages: 50
@@ -1200,3 +1405,593 @@
   max_pages: 25
   delay_ms: 1800
   post_strategy: per_target
+
+# Authoritative nationwide inventory feeds. Sitemap targets avoid brittle page
+# bounds and are safe inputs for disappearance reconciliation.
+- name: home2u_inventory_sitemap
+  url: "https://home2u.bg/sitemap_index.xml"
+  mode: sitemap
+  sitemap_url_regex: "/crb_(?:project|apartment)(?:-sitemap[0-9]*|-sitemap)\\.xml$"
+  listing_url_regex: "^https://home2u\\.bg/(?:property|project)/"
+  max_sitemaps: 100
+  post_batch_items: 1000
+  timeout_ms: 120000
+
+- name: dskhome_inventory_sitemap
+  url: "https://dskhome.bg/sitemap.xml"
+  mode: sitemap
+  sitemap_url_regex: "/ml-bff/listings/api/listings/.*\\.xml$"
+  max_sitemaps: 150
+  post_batch_items: 1000
+  timeout_ms: 120000
+  listing_url_regex: '^https://dskhome\.bg/listings/.+-[0-9]+$'
+  # Listing pages are protected by Radware and return the same 200 challenge for
+  # both real and fake URLs. The server-generated listing sitemap is therefore
+  # the strongest non-destructive activity signal available.
+  validation_mode: source
+
+- name: bulgarian_properties_sale
+  url: "https://www.bulgarianproperties.com/sale_properties/index.html"
+  mode: pagination
+  listing_url_regex: "^https://www\\.bulgarianproperties\\.com/[^/]+/AD[0-9]+BG_.+\\.html$"
+  max_pages: 500
+  delay_ms: 1200
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imoti_info_inventory_sitemap
+  url: "https://imoti.info/sitemap/index.xml"
+  mode: sitemap
+  authoritative_domain_inventory: true
+  sitemap_url_regex: "/sitemap/adverts-(?:rents|sales)(?:-part[0-9]+)?\\.xml$"
+  listing_url_regex: "^https://imoti\\.info/obiava/"
+  min_items: 10000
+  max_sitemaps: 25
+  post_batch_items: 1000
+  timeout_ms: 120000
+
+- name: revolution_estate_sale_sitemap
+  url: "https://revolution-estate.bg/sitemap.xml"
+  mode: sitemap
+  listing_url_regex: "^https://revolution-estate\\.bg/imot/"
+  max_sitemaps: 2
+  post_batch_items: 1000
+  timeout_ms: 90000
+
+# ALO publishes complete category result sets but no listing sitemap. Keep the
+# categories separate so each can reach its natural pagination end and the domain
+# cycle reconciles only when every property type succeeds.
+- name: alo_bg_sale_apartments
+  url: "https://www.alo.bg/obiavi/imoti-prodajbi/apartamenti-stai/?qnbc=1"
+  mode: pagination
+  max_pages: 5000
+  delay_ms: 900
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://www\.alo\.bg/.+-[0-9]+$'
+
+- name: alo_bg_sale_houses
+  url: "https://www.alo.bg/obiavi/imoti-prodajbi/kashti-vili/?qnbc=1"
+  mode: pagination
+  max_pages: 5000
+  delay_ms: 900
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://www\.alo\.bg/.+-[0-9]+$'
+
+- name: alo_bg_sale_commercial
+  url: "https://www.alo.bg/obiavi/imoti-prodajbi/magazini-ofisi/?qnbc=1"
+  mode: pagination
+  max_pages: 1000
+  delay_ms: 900
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://www\.alo\.bg/.+-[0-9]+$'
+
+- name: alo_bg_sale_building_land
+  url: "https://www.alo.bg/obiavi/imoti-prodajbi/parceli-za-zastroiavane-investicionni-proekti/?qnbc=1"
+  mode: pagination
+  max_pages: 5000
+  delay_ms: 900
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://www\.alo\.bg/.+-[0-9]+$'
+
+- name: alo_bg_sale_agricultural_land
+  url: "https://www.alo.bg/obiavi/imoti-prodajbi/zemedelska-zemia-gradini-lozia-gora/?qnbc=1"
+  mode: pagination
+  max_pages: 1000
+  delay_ms: 900
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://www\.alo\.bg/.+-[0-9]+$'
+
+- name: alo_bg_sale_industrial
+  url: "https://www.alo.bg/obiavi/imoti-prodajbi/promishleni-pomeshtenia-skladove/?qnbc=1"
+  mode: pagination
+  max_pages: 500
+  delay_ms: 900
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://www\.alo\.bg/.+-[0-9]+$'
+
+- name: alo_bg_sale_garages
+  url: "https://www.alo.bg/obiavi/imoti-prodajbi/garaji-parkomesta/?qnbc=1"
+  mode: pagination
+  max_pages: 500
+  delay_ms: 900
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://www\.alo\.bg/.+-[0-9]+$'
+
+- name: alo_bg_sale_hotels
+  url: "https://www.alo.bg/obiavi/imoti-prodajbi/hoteli-moteli/?qnbc=1"
+  mode: pagination
+  max_pages: 500
+  delay_ms: 900
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://www\.alo\.bg/.+-[0-9]+$'
+
+- name: alo_bg_sale_restaurants
+  url: "https://www.alo.bg/obiavi/imoti-prodajbi/zavedenia/?qnbc=1"
+  mode: pagination
+  max_pages: 500
+  delay_ms: 900
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://www\.alo\.bg/.+-[0-9]+$'
+
+- name: alo_bg_sale_other
+  url: "https://www.alo.bg/obiavi/imoti-prodajbi/drugi-imoti/?qnbc=1"
+  mode: pagination
+  max_pages: 250
+  delay_ms: 900
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://www\.alo\.bg/.+-[0-9]+$'
+
+# OLX reports the complete catalogue size through its official JSON inventory,
+# but caps one query at 1,000 results.  The adapter partitions these roots by
+# every Bulgarian region and recursively by price, then deduplicates boundaries.
+- name: olx_bg_sale_inventory
+  url: "https://www.olx.bg/nedvizhimi-imoti/prodazhbi/"
+  mode: olx_api
+  api_category_id: 381
+  authoritative_domain_inventory: true
+  min_items: 25000
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_items: 1000
+  validation_mode: source
+  listing_url_regex: '^https://www\.olx\.bg/d/ad/.+-CID[0-9]+-ID[A-Za-z0-9]+\.html(?:\?.*)?$'
+
+- name: olx_bg_rent_inventory
+  url: "https://www.olx.bg/nedvizhimi-imoti/naemi/"
+  mode: olx_api
+  api_category_id: 383
+  authoritative_domain_inventory: true
+  min_items: 10000
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_items: 1000
+  validation_mode: source
+  listing_url_regex: '^https://www\.olx\.bg/d/ad/.+-CID[0-9]+-ID[A-Za-z0-9]+\.html(?:\?.*)?$'
+
+- name: olx_bg_roommates_inventory
+  url: "https://www.olx.bg/nedvizhimi-imoti/skvartiranti/"
+  mode: olx_api
+  api_category_id: 844
+  authoritative_domain_inventory: true
+  min_items: 1
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_items: 1000
+  validation_mode: source
+  listing_url_regex: '^https://www\.olx\.bg/d/ad/.+-CID[0-9]+-ID[A-Za-z0-9]+\.html(?:\?.*)?$'
+
+# Nationwide rental coverage for browser-only sources. Keeping sale and rental
+# inventories as separate targets makes their natural ends independently
+# verifiable while the domain cycle still reconciles them as one catalogue.
+- name: address_bg_rent
+  url: "https://address.bg/rent"
+  mode: http_inventory
+  max_pages: 1000
+  min_items: 100
+  delay_ms: 150
+  timeout_ms: 60000
+  post_strategy: per_target
+  post_batch_items: 500
+  listing_url_regex: '^https://address\.bg/.+-offer[0-9]+$'
+
+- name: arcoreal_bg_rent
+  url: "https://arcoreal.bg/%D0%BE%D1%84%D0%B5%D1%80%D1%82%D0%B8?t=4&ca=-1&pfr=&pto=&afr=&ato=&ffr=-100&fto=100&country-name=1&c=1&l%5B%5D=&page=1&limit=50"
+  mode: pagination
+  max_pages: 100
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://arcoreal\.bg/.+/[^/]+-[0-9]+$'
+
+- name: bazar_bg_rent
+  url: "https://bazar.bg/obiavi/naemi-imoti"
+  mode: pagination
+  listing_url_regex: "^https://bazar\\.bg/obiava-[0-9]+/"
+  max_pages: 3000
+  delay_ms: 1500
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: bulgarian_properties_rent
+  url: "https://www.bulgarianproperties.com/rent_properties/index.html"
+  mode: pagination
+  listing_url_regex: "^https://www\\.bulgarianproperties\\.com/[^/]+/AD[0-9]+BG_.+\\.html$"
+  min_items: 25
+  max_pages: 500
+  delay_ms: 1200
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: imoteka_bg_rent
+  url: "https://imoteka.bg/rent"
+  mode: pagination
+  pagination_kind: numbers
+  results_fingerprint_selector: "a[href*='-offer']"
+  page_number_container_selector: "ul.pagination"
+  page_number_item_selector: "a.page-link"
+  wait_after_click_ms: 8000
+  timeout_ms: 15000
+  post_batch_pages: 50
+  max_pages: 1000
+  listing_url_regex: '^https://imoteka\.bg/.+-offer[0-9]+$'
+
+- name: mirela_bg_rent
+  url: "https://www.mirela.bg/index.php?p=offer_list&order_by=1&type=2&ac_s=&ac_v=&map=28.223876171840292%7C45.759858687855855%7C23.116974492669107%7C39.17221570275807%7C7&page=1"
+  mode: pagination
+  listing_url_regex: "^https://www\\.mirela\\.bg/naemi/.+-[0-9]+$"
+  validation_mode: source
+  max_pages: 100
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: property_bg_rent
+  url: "https://www.property.bg/rentals/bulgaria/selection/"
+  mode: pagination
+  listing_url_regex: "^https://www\\.property\\.bg/property-[0-9]+-.+/$"
+  max_pages: 500
+  delay_ms: 1500
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 50
+
+- name: alo_bg_rent_apartments
+  url: "https://www.alo.bg/obiavi/imoti-naemi/apartamenti/?qnbc=1"
+  mode: pagination
+  max_pages: 5000
+  delay_ms: 900
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://www\.alo\.bg/.+-[0-9]+$'
+
+- name: alo_bg_rent_houses
+  url: "https://www.alo.bg/obiavi/imoti-naemi/kashti-vili/?qnbc=1"
+  mode: pagination
+  max_pages: 1000
+  delay_ms: 900
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://www\.alo\.bg/.+-[0-9]+$'
+
+- name: alo_bg_rent_commercial
+  url: "https://www.alo.bg/obiavi/imoti-naemi/magazini-ofisi/?qnbc=1"
+  mode: pagination
+  max_pages: 1000
+  delay_ms: 900
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://www\.alo\.bg/.+-[0-9]+$'
+
+- name: alo_bg_rent_land
+  url: "https://www.alo.bg/obiavi/imoti-naemi/parceli-tereni/?qnbc=1"
+  mode: pagination
+  max_pages: 500
+  delay_ms: 900
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://www\.alo\.bg/.+-[0-9]+$'
+
+- name: alo_bg_rent_industrial
+  url: "https://www.alo.bg/obiavi/imoti-naemi/promishleni-pomeshtenia-skladove/?qnbc=1"
+  mode: pagination
+  max_pages: 500
+  delay_ms: 900
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://www\.alo\.bg/.+-[0-9]+$'
+
+- name: alo_bg_rent_garages
+  url: "https://www.alo.bg/obiavi/imoti-naemi/garaji-parkingi-parkomesta/?qnbc=1"
+  mode: pagination
+  max_pages: 500
+  delay_ms: 900
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://www\.alo\.bg/.+-[0-9]+$'
+
+- name: alo_bg_rent_hotels
+  url: "https://www.alo.bg/obiavi/imoti-naemi/hoteli-pochivni-stancii/?qnbc=1"
+  mode: pagination
+  max_pages: 500
+  delay_ms: 900
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://www\.alo\.bg/.+-[0-9]+$'
+
+- name: alo_bg_rent_hourly_rooms
+  url: "https://www.alo.bg/obiavi/imoti-naemi/stai-pochasov-naem/?qnbc=1"
+  mode: pagination
+  max_pages: 1000
+  delay_ms: 900
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://www\.alo\.bg/.+-[0-9]+$'
+
+- name: alo_bg_rent_roommates
+  url: "https://www.alo.bg/obiavi/imoti-naemi/stai-sakvartiranti/?qnbc=1"
+  mode: pagination
+  max_pages: 1000
+  delay_ms: 900
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://www\.alo\.bg/.+-[0-9]+$'
+
+- name: alo_bg_rent_restaurants
+  url: "https://www.alo.bg/obiavi/imoti-naemi/zavedenia/?qnbc=1"
+  mode: pagination
+  max_pages: 500
+  delay_ms: 900
+  post_strategy: per_target
+  post_batch_pages: 50
+  listing_url_regex: '^https://www\.alo\.bg/.+-[0-9]+$'
+
+# Complete domain inventories discovered during the nationwide coverage audit.
+# These feeds supersede the older city/browser partitions for the same domain.
+- name: homes_bg_inventory_sitemap
+  url: "https://www.homes.bg/sitemaps/sitemap.xml"
+  mode: sitemap
+  authoritative_domain_inventory: true
+  sitemap_url_regex: "/sitemaps/offers-[a-z]+-[0-9]+\\.xml$"
+  listing_url_regex: "^https://www\\.homes\\.bg/offer/"
+  min_items: 10000
+  max_sitemaps: 100
+  post_batch_items: 1000
+  timeout_ms: 120000
+  # Homes responds 200 to HEAD even when GET is a real 404, so every offer must
+  # be content-fetched before insertion.
+  validation_mode: get
+
+- name: imoti_net_inventory_sitemap
+  url: "https://www.imoti.net/sitemap/sitemapindex.xml"
+  mode: sitemap
+  authoritative_domain_inventory: true
+  sitemap_url_regex: "/sitemap/sitemap(?:3|4)\\.xml$"
+  listing_url_regex: "^https://www\\.imoti\\.net/bg/obiava/[0-9]+$"
+  min_items: 10000
+  max_sitemaps: 5
+  post_batch_items: 1000
+  timeout_ms: 120000
+  # Imoti.net serializes or stalls high-volume status requests.  A direct
+  # 8,992-URL validation sample found zero dead/off-listing URLs; use its
+  # tightly filtered official advert sitemaps as the inventory authority.
+  validation_mode: source
+
+- name: imoti_com_inventory_sitemap
+  url: "https://www.imoti.com/sitemap/index.xml"
+  mode: sitemap
+  authoritative_domain_inventory: true
+  sitemap_url_regex: "/sitemap/adverts(?:-part[0-9]+)?\\.xml$"
+  listing_url_regex: "^https://www\\.imoti\\.com/obiava/[0-9]+/"
+  min_items: 10000
+  max_sitemaps: 10
+  post_batch_items: 1000
+  timeout_ms: 120000
+
+- name: imot_bg_inventory_sitemap
+  url: "https://www.imot.bg/sitemap/index.xml"
+  mode: sitemap
+  authoritative_domain_inventory: true
+  sitemap_url_regex: "/sitemap/listings-[0-9]+\\.xml\\.gz$"
+  listing_url_regex: "^https://www\\.imot\\.bg/obiava-"
+  min_items: 10000
+  max_sitemaps: 50
+  post_batch_items: 1000
+  # The publisher rebuilds numbered shards in place. Reject snapshots where
+  # overlapping old/new shards make the catalogue non-authoritative.
+  sitemap_min_unique_ratio: 0.95
+  timeout_ms: 120000
+
+- name: holmes_bg_inventory_sitemap
+  url: "https://www.holmes.bg/sitemap/index.xml"
+  mode: sitemap
+  authoritative_domain_inventory: true
+  sitemap_url_regex: "/sitemap/adverts_[^/]+(?:-part[0-9]+)?\\.xml$"
+  listing_url_regex: "^https://www\\.holmes\\.bg/obiava/[0-9]+/"
+  min_items: 10000
+  max_sitemaps: 20
+  post_batch_items: 1000
+  timeout_ms: 120000
+
+- name: ues_bg_inventory_sitemap
+  url: "https://ues.bg/sitemap.xml"
+  mode: sitemap
+  authoritative_domain_inventory: true
+  sitemap_url_regex: "/sitemap-offers\\.xml$"
+  listing_url_regex: "^https://ues\\.bg/bg/imot/"
+  min_items: 100
+  max_sitemaps: 5
+  post_batch_items: 1000
+  timeout_ms: 90000
+
+- name: yavlena_inventory_sitemap
+  url: "https://www.yavlena.com/sitemap_index.xml"
+  mode: sitemap
+  authoritative_domain_inventory: true
+  sitemap_url_regex: "/sitemap/properties[0-9]+\\.xml$"
+  listing_url_regex: "^https://www\\.yavlena\\.com/(?:bg/)?[0-9]+(?:/rent)?/?$"
+  min_items: 1000
+  max_sitemaps: 5
+  post_batch_items: 1000
+  timeout_ms: 90000
+
+- name: suprimmo_inventory_sitemap
+  url: "https://www.suprimmo.bg/sitemap.xml"
+  mode: sitemap
+  authoritative_domain_inventory: true
+  sitemap_url_regex: "/sitemap_bg1\\.xml$"
+  listing_url_regex: "^https://www\\.suprimmo\\.bg/imot-[0-9]+-"
+  min_items: 1000
+  max_sitemaps: 5
+  post_batch_items: 1000
+  timeout_ms: 90000
+
+- name: luximmo_bg_inventory_sitemap
+  url: "https://www.luximmo.com/sitemap.xml"
+  mode: sitemap
+  authoritative_domain_inventory: true
+  sitemap_url_regex: "/sitemap_en[0-9]+\\.xml$"
+  listing_url_regex: "^https://www\\.luximmo\\.com/bulgaria/.*/luxury-property-[0-9]+-.*\\.html$"
+  min_items: 500
+  max_sitemaps: 5
+  post_batch_items: 1000
+  timeout_ms: 90000
+
+- name: buildingbox_inventory_sitemap
+  url: "https://buildingbox.bg/sitemap_index.xml"
+  mode: sitemap
+  authoritative_domain_inventory: true
+  sitemap_url_regex: "/(?:property-sitemap[0-9]*|apartment-sitemap|building-sitemap|complex-sitemap)\\.xml$"
+  listing_url_regex: "^https://buildingbox\\.bg/(?:properties|apartment-map|building-map|complex-map)/.+/$"
+  min_items: 500
+  max_sitemaps: 10
+  post_batch_items: 1000
+  timeout_ms: 90000
+
+# Newly onboarded sources.
+- name: novitesgradi_inventory_sitemap
+  url: "https://novitesgradi.bg/sitemap_index.xml"
+  mode: sitemap
+  authoritative_domain_inventory: true
+  sitemap_url_regex: "/property-sitemap\\.xml$"
+  listing_url_regex: "^https://novitesgradi\\.bg/sgrada/.+/$"
+  min_items: 500
+  max_sitemaps: 5
+  post_batch_items: 1000
+  timeout_ms: 90000
+
+- name: imotno_inventory_sitemap
+  url: "https://imotno.bg/sitemap.xml"
+  mode: sitemap
+  authoritative_domain_inventory: true
+  sitemap_url_regex: "/sitemaps/properties\\.xml(?:\\?shard=[0-9]+)?$"
+  listing_url_regex: "^https://imotno\\.bg/property/[0-9a-f-]+$"
+  min_items: 1
+  max_sitemaps: 20
+  post_batch_items: 1000
+  timeout_ms: 90000
+
+- name: bcpea_public_sales_inventory
+  url: "https://sales.bcpea.org/properties?perpage=36"
+  mode: pagination
+  listing_url_regex: "^https://sales\\.bcpea\\.org/properties/[0-9]+$"
+  min_items: 500
+  max_pages: 250
+  delay_ms: 900
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 25
+
+- name: oikia_inventory_requires_permission
+  # Oikia publishes search/category URLs in its sitemap, but robots.txt sets a
+  # 10-second crawl delay and disallows /listing/ detail pages. Keep this target
+  # documented and disabled rather than pretending category URLs are listings.
+  enabled: false
+  url: "https://www.oikia.com/sitemap/sitemap.xml"
+  mode: sitemap
+  listing_url_regex: "^https://www\\.oikia\\.com/listing/"
+  min_items: 1
+  max_sitemaps: 5
+  post_batch_items: 1000
+
+# Public/state auctions and bank-owned property inventory (nationwide).
+- name: appk_state_property_upcoming
+  url: "https://estate-sales.uslugi.io/upcoming-public"
+  mode: extract_once
+  listing_url_regex: "^https://estate-sales\\.uslugi\\.io/upcoming-public/view/[0-9]+$"
+  min_items: 1
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+
+- name: ubb_bank_property_inventory
+  url: "https://estates.ubb.bg/?listing_type_id=1"
+  mode: pagination
+  listing_url_regex: "^https://estates\\.ubb\\.bg/sales/[0-9]+$"
+  min_items: 20
+  max_pages: 30
+  delay_ms: 800
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 10
+
+- name: bbr_bank_property_inventory
+  url: "https://bbr.bg/bg/produkti-i-uslugi/prodazhba-na-aktivi/nedvijimi-imoti/"
+  mode: extract_once
+  listing_url_regex: "^https://bbr\\.bg/bg/nedvijimi-imoti/.+/$"
+  min_items: 5
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+
+- name: sofia_municipal_property_tenders
+  url: "https://www.sofia.bg/tenders"
+  mode: pagination
+  listing_url_regex: "^https://www\\.sofia\\.bg/w/[0-9]+$"
+  listing_title_regex: "(недвижим|\\bимот|поземлен|сград|помещен|терен|площ|земя|гараж|офис|магазин|павилион|паркинг)"
+  listing_title_exclude_regex: "(движим[иа]|автомобил|отпадъц|вендинг|прекратяв|оттеглян)"
+  min_items: 1
+  max_pages: 100
+  delay_ms: 800
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+  post_batch_pages: 10
+
+- name: plovdiv_municipal_property_tenders
+  url: "https://www.plovdiv.bg/announcements/auctions/turgove/"
+  mode: extract_once
+  listing_url_regex: "^https://www\\.plovdiv\\.bg/wp-content/uploads/.+\\.(?:pdf|docx)$"
+  listing_title_regex: "(недвижим|\\bимот|поземлен|\\bПИ\\b|сград|помещен|терен|площ|земя|гараж|офис|магазин|павилион|паркинг)"
+  listing_title_exclude_regex: "(движим[иа]|автомобил|отпадъц|вендинг|прекратяв|оттеглян)"
+  min_items: 1
+  wait_until: domcontentloaded
+  timeout_ms: 45000
+  post_strategy: per_target
+
+- name: nra_public_sales_requires_publisher_access
+  # The official portal challenges clean unattended Chromium sessions. Keep the
+  # source documented but disabled until NRA provides a feed/API or permits a
+  # persistent authenticated browser session; do not automate challenge bypasses.
+  enabled: false
+  url: "https://sales.nra.bg/realestate"
+  mode: pagination
+  listing_url_regex: "^https://sales\\.nra\\.bg/realestate/[0-9]+$"
+  min_items: 1
+  max_pages: 200

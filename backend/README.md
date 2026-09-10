@@ -54,7 +54,7 @@ uvicorn app.main:app --reload --port 8787
 - Imoti.net.  OK
 - Imoti.info. OK
 - Bazar.bg Real Estate. OK
-- Address.bg - OK
+- Address.bg - nationwide structured inventory + live URL validation
 - Holmes.bg - OK
 - Luximmo.bg - OK
 - domaza.bg - OK
@@ -62,20 +62,37 @@ uvicorn app.main:app --reload --port 8787
 - arcoreal.bg - OK
 - suprimmo  - OK
 - Building Box - OK
-- realestates.bg - OK
+- realestates.bg - configured; current publisher host is unreachable from this egress
 - property.bg - OK
 - imoti.com - OK
 - Unique Estates - OK
 - Yavlena  - OK
 - homes.bg - OK
 
-#### Later - buggy
-- era.bg - 4000 listings
-- Realistimo - 7000 listings Sofia
-- Homes2u.bg - 3920 buildinga
-- Imoteka.bg - 11300 listings
-- dskhome - 55000 listings
-- BulgarianProperties.bg - 3700 listings
+#### Nationwide inventory adapters
+
+- ERA: complete published offer sitemap (sale and rent)
+- Home2U (`home2u.bg`): published project and apartment sitemaps
+- DSK Home: published listing sitemap index and shards
+- Bulgarian Properties: deterministic `indexN.html` sale and rental pagination
+- Imoti.info: published sale and rental sitemap shards
+- Imoti.net: complete detail-listing sitemap shards
+- Revolution Estate: published Bulgarian property sitemap
+- ALO: separate nationwide sale and rental property-type pagination targets
+- Address: server-rendered sale/rent paginator, explicit active-row filtering,
+  and status/redirect validation
+- OLX: official current JSON inventory, partitioned across all 28 Bulgarian
+  regions and recursively by price to avoid its 1,000-result query cap
+- NoviteSgradi and IMOTNO: published listing sitemaps
+- BCPEA public sales: numbered nationwide auction pagination
+
+#### Authorization/session-gated
+
+- Realistimo is disabled because its current robots policy prohibits automated
+  scraping/data mining without prior written permission.
+- Imoteka remains configured but Cloudflare rejects clean headless sessions. Set
+  `IMOTEKA_STORAGE_STATE_PATH` to reuse an authorized browser session; an empty or
+  blocked run fails its inventory cycle and cannot deactivate listings.
 
 ---
 
@@ -86,6 +103,49 @@ This is the command to run the pager for homes.bg
 ```bash
 docker compose --profile scrape run --rm   -e DATABASE_URL='%URL'   scraper   python /app/scraper/homes_api_pager.py     --partitions /app/data/homes_partitions.txt     --db     --db-table extraction_items
 ```
+
+## Safe scraper verification
+
+Run one target without writing inventory cycles or extraction data:
+
+```bash
+docker compose --profile scrape run --rm scraper \
+  python -m scraper.runner --only era_inventory_sitemap --dry-run
+```
+
+The runner rejects duplicate target names/URLs and unsupported modes at startup.
+Targets that discover fewer than `min_items` fail closed. Published sitemap feeds
+are processed sequentially and posted in bounded batches.
+
+Repair gaps after an interrupted sitemap run without revalidating known active
+URLs:
+
+```bash
+docker compose --profile scrape run --rm scraper \
+  python -m scraper.runner --only imot_bg_inventory_sitemap \
+  --sitemap-skip-existing
+```
+
+This recovery form is deliberately non-reconciling. Complete scheduled domain
+cycles remain responsible for missing/inactive lifecycle decisions.
+
+Run only the fast authoritative inventories, with six domains in flight:
+
+```bash
+docker compose --profile scrape run --rm scraper \
+  python -m scraper.runner --only-mode sitemap --domain-concurrency 6
+```
+
+Enable the optional daily inventory and detail schedulers:
+
+```bash
+docker compose --profile schedule up -d --build index_scheduler detail_scheduler
+```
+
+`INDEX_RUN_AT` defaults to `00:30` Europe/Sofia and
+`SCRAPER_DOMAIN_CONCURRENCY` defaults to `6`. A listing is made inactive only
+after two complete successful domain inventories omit it. Failed, truncated, or
+blocked runs never remove listings.
 
 ---
 

@@ -68,12 +68,21 @@
   class SiteOverrides {
     static getAll() {
       return new Promise((resolve) => {
-        chrome.storage.sync.get({ siteOverrides: {} }, (items) => resolve(items.siteOverrides || {}));
+        const runnerOverrides = (window.__imotiRunnerSiteOverrides && typeof window.__imotiRunnerSiteOverrides === "object")
+          ? window.__imotiRunnerSiteOverrides
+          : {};
+        chrome.storage.sync.get({ siteOverrides: {} }, (items) => {
+          const stored = (items && items.siteOverrides && typeof items.siteOverrides === "object")
+            ? items.siteOverrides
+            : {};
+          resolve({ ...runnerOverrides, ...stored });
+        });
       });
     }
     static async getForHost(hostname) {
       const all = await SiteOverrides.getAll();
-      return all[hostname] || null;
+      const host = String(hostname || "").toLowerCase().replace(/^www\./, "");
+      return all[hostname] || all[host] || all[`www.${host}`] || null;
     }
   }
 
@@ -87,6 +96,18 @@
     } catch (_) {
       return null;
     }
+  }
+
+  function canonicalListingUrl(href) {
+    const u = tryUrl(href);
+    if (!u) return href || null;
+    u.hash = "";
+    // Tracking context changes between result pages and must not create a new
+    // canonical listing row for the same OLX advert.
+    if (/(^|\.)olx\.bg$/i.test(u.hostname)) {
+      ["search_reason", "reason", "isPreviewActive"].forEach((key) => u.searchParams.delete(key));
+    }
+    return u.href;
   }
 
   function isProbablyFooterOrNav(a) {
@@ -599,7 +620,7 @@ function extractLuximmoItemsFromPage() {
       const texts = this._pickTexts(el);
       return {
         title,
-        url: a?.href || null,
+        url: a?.href ? canonicalListingUrl(a.href) : null,
         image: images[0] || null,
         images,
         texts,
@@ -622,7 +643,10 @@ function extractLuximmoItemsFromPage() {
     }
 
     _pickPrimaryLink(el) {
-      const links = Array.from(el.querySelectorAll("a[href]"))
+      const links = [
+        ...(el.matches && el.matches("a[href]") ? [el] : []),
+        ...Array.from(el.querySelectorAll("a[href]")),
+      ]
         .map((x) => x)
         .filter((a) => a.href && !a.href.endsWith("#"));
 

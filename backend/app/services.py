@@ -159,6 +159,29 @@ def _hash_text(s: Optional[str]) -> Optional[str]:
     return hashlib.sha256(s.encode("utf-8", "ignore")).hexdigest()
 
 
+def _index_fingerprint(item: Any) -> Optional[str]:
+    """Hash stable list/sitemap evidence used to decide on detail refreshes.
+
+    Sitemap entries often have no title, but do publish ``lastmod`` in ``texts``.
+    Hashing only the title therefore missed real source updates. Keep the existing
+    ``title_hash`` column for compatibility while storing this broader fingerprint.
+    """
+    evidence = {
+        "title": _sanitize(getattr(item, "title", None)),
+        "image": _sanitize(getattr(item, "image", None)),
+        "texts": _sanitize(list(getattr(item, "texts", None) or [])),
+    }
+    if not any(_detail_value_has_content(value) for value in evidence.values()):
+        return None
+    encoded = json.dumps(
+        evidence,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return _hash_text(encoded)
+
+
 def _url_domain(url: str) -> Optional[str]:
     try:
         from urllib.parse import urlparse
@@ -193,6 +216,68 @@ def _chunks(seq: List[str], size: int) -> Iterable[List[str]]:
         yield seq[i : i + size]
 
 
+def _unverifiable_urls_from_meta(
+    meta: Any,
+    *,
+    source_url: str,
+    limit: int = 5000,
+) -> List[str]:
+    """Return same-domain transient failures supplied by the trusted index runner."""
+    if not isinstance(meta, dict):
+        return []
+    validation = meta.get("listingValidation")
+    if not isinstance(validation, dict):
+        return []
+    values = validation.get("unverifiableUrls")
+    if not isinstance(values, list):
+        return []
+
+    source_domain = _url_domain(source_url)
+    out: List[str] = []
+    seen: Set[str] = set()
+    for value in values:
+        if len(out) >= max(0, int(limit)):
+            break
+        if not isinstance(value, str):
+            continue
+        url = _sanitize(value.strip())
+        if (
+            not url
+            or not url.startswith(("http://", "https://"))
+            or _url_domain(url) != source_domain
+            or url in seen
+        ):
+            continue
+        seen.add(url)
+        out.append(url)
+    return out
+
+
+def _lock_listing_urls(session: Session, urls: List[str]) -> None:
+    """Serialize overlapping PostgreSQL upserts without locking unrelated URLs.
+
+    The previous read-then-insert path allowed concurrent scraper batches to both
+    observe a missing URL and then race on listings.item_url. Locks are acquired
+    in hash order so overlapping batches cannot deadlock each other.
+    """
+    bind = session.get_bind()
+    if not urls or bind is None or bind.dialect.name != "postgresql":
+        return
+    session.execute(
+        text(
+            """
+            SELECT pg_advisory_xact_lock(lock_key)
+            FROM (
+                SELECT hashtextextended(locked_url, 0) AS lock_key
+                FROM unnest(CAST(:urls AS text[])) AS locked_urls(locked_url)
+                ORDER BY lock_key
+            ) AS ordered_locks
+            """
+        ),
+        {"urls": sorted(set(urls))},
+    ).all()
+
+
 class ExtractionService:
     """Persistence + queue + de-duplication rules.
 
@@ -203,12 +288,13 @@ class ExtractionService:
 
     **Detail runs** (detail scraper):
     - Do NOT create new ExtractionRun/ExtractionItem rows.
-    - Overwrite the *latest index* ExtractionItem.raw_text for that item_url in place.
-      This prevents detail runs from creating “duplicate” rows.
+    - Store raw detail evidence on the canonical Listing without rewriting an
+      historical ExtractionItem row.
 
     Change detection used (fast):
-    - title_hash derived from the listing title (often includes price on portals)
-    - if title_hash changes => Listing.detail_done is reset to False (so it re-enters the detail queue)
+    - ``title_hash`` stores a compatible index fingerprint of title, cover image,
+      and text evidence (including sitemap ``lastmod`` values).
+    - if it changes, ``Listing.detail_done`` is reset so the detail is refreshed.
     """
 
     def __init__(self, session: Session):
@@ -220,7 +306,7 @@ class ExtractionService:
         meta_in: Dict = dict(payload.meta or {})
         mode = str(meta_in.get("mode") or "").strip().lower()
         if mode == "detail":
-            return self._apply_detail_overwrite(payload, commit=commit)
+            return self._apply_detail_state(payload, commit=commit)
         return self._create_index_run(payload, commit=commit)
 
     def create_batch(self, payloads: List[ExtractionIn]) -> "ExtractionBatchOut":
@@ -490,6 +576,26 @@ class ExtractionService:
 
     # ---------- detail queue ----------
 
+    def existing_active_urls(self, urls: Iterable[str]) -> List[str]:
+        """Return only already-active URLs from a bounded recovery batch."""
+        clean = list(
+            dict.fromkeys(
+                value.strip()
+                for value in urls
+                if isinstance(value, str)
+                and value.strip().startswith(("http://", "https://"))
+            )
+        )[:5000]
+        if not clean:
+            return []
+        rows = self.session.execute(
+            select(Listing.item_url).where(
+                Listing.active.is_(True),
+                Listing.item_url.in_(clean),
+            )
+        ).scalars()
+        return list(rows)
+
     def detail_queue(
         self,
         domain: Optional[str] = None,
@@ -541,7 +647,14 @@ class ExtractionService:
             cand = cand.where(~ExtractionItem.item_url.in_(out))
 
         cand = cand.where(~exists(select(1).select_from(Listing).where(Listing.item_url == ExtractionItem.item_url)))
-        cand = cand.distinct().order_by(desc(ExtractionItem.run_id)).limit(remaining)
+        # PostgreSQL requires ORDER BY expressions to be part of a DISTINCT
+        # projection. Grouping by URL and ordering by its newest source run gives
+        # the intended stable dedupe without that invalid DISTINCT query.
+        cand = (
+            cand.group_by(ExtractionItem.item_url)
+            .order_by(desc(func.max(ExtractionItem.run_id)))
+            .limit(remaining)
+        )
 
         extra_rows = self.session.execute(cand).all()
         extra_urls = [r[0] for r in extra_rows if isinstance(r[0], str) and r[0].startswith("http")]
@@ -592,6 +705,30 @@ class ExtractionService:
         now = datetime.now(timezone.utc)
         cycle_id = self._cycle_id_for_payload(payload)
 
+        # A timeout, rate-limit, or anti-bot page is not evidence that a known
+        # listing disappeared. Heartbeat only rows that already exist and are
+        # still active; never create a listing from unverifiable evidence and
+        # never reactivate an inactive row this way.
+        unverifiable_urls = _unverifiable_urls_from_meta(
+            payload.meta or {}, source_url=payload.sourceUrl
+        )
+        if unverifiable_urls:
+            for chunk in _chunks(unverifiable_urls, 800):
+                values: Dict[str, Any] = {
+                    "last_seen_at": extracted_at,
+                    "missing_cycles": 0,
+                }
+                if cycle_id is not None:
+                    values["last_seen_cycle_id"] = cycle_id
+                self.session.execute(
+                    update(Listing)
+                    .where(
+                        Listing.item_url.in_(chunk),
+                        Listing.active.is_(True),
+                    )
+                    .values(**values)
+                )
+
         # Deduplicate incoming items by URL (keep first occurrence)
         raw_items = list(payload.items or [])
         dedup: Dict[str, Any] = {}
@@ -620,6 +757,8 @@ class ExtractionService:
                 return self._to_out(run)
             return self._to_out(last)
 
+        _lock_listing_urls(self.session, urls + unverifiable_urls)
+
         # Load existing listings for these URLs
         existing: Dict[str, Listing] = {}
         for chunk in _chunks(urls, 800):
@@ -633,7 +772,7 @@ class ExtractionService:
 
         for u, it in dedup.items():
             title = _sanitize(getattr(it, "title", None))
-            th = _hash_text(title)
+            th = _index_fingerprint(it)
             row = existing.get(u)
             if row is None:
                 new_urls.add(u)
@@ -728,7 +867,7 @@ class ExtractionService:
         for u in to_store:
             it = dedup[u]
             title = _sanitize(getattr(it, "title", None))
-            th = _hash_text(title)
+            th = _index_fingerprint(it)
             img = _sanitize(getattr(it, "image", None))
 
             row = existing.get(u)
@@ -779,10 +918,13 @@ class ExtractionService:
 
         return self._to_out(run)
 
-    def _apply_detail_overwrite(self, payload: ExtractionIn, *, commit: bool) -> ExtractionOut:
-        """Apply a detail extraction by overwriting existing index item's raw_text.
+    def _apply_detail_state(self, payload: ExtractionIn, *, commit: bool) -> ExtractionOut:
+        """Apply raw detail evidence to latest state without rewriting history.
 
-        Prevents duplicates: NO new ExtractionRun/ExtractionItem rows are created.
+        Detail runs do not create duplicate index snapshots. They also no longer
+        mutate the latest historical ExtractionItem: index history remains exactly
+        as it arrived, while the full untransformed detail payload lives on the
+        canonical Listing row for downstream normalization.
         """
         source_url = _sanitize(payload.sourceUrl)
         extracted_at = payload.extractedAt.astimezone(timezone.utc)
@@ -854,18 +996,9 @@ class ExtractionService:
         # Persist raw payload even if ORM is out-of-sync with schema
         _apply_raw_payload_to_listing(self.session, item_url=source_url, raw_payload=_jsonable(payload.dict()))
 
-        # 2) Overwrite raw_text on the latest index item for that URL (also refresh images if provided)
-        idx_item, idx_run = self._latest_index_item_and_run(source_url)
-        if idx_item is not None and full_desc:
-            idx_item.raw_text = full_desc
-            if not idx_item.title and payload.pageTitle:
-                idx_item.title = _sanitize(payload.pageTitle)
-
-        if idx_item is not None:
-            if cover:
-                idx_item.image = cover
-            if has_new_images:
-                idx_item.images = images
+        # 2) Resolve the index run only for the API response. Never rewrite an
+        # ExtractionItem here: those rows are immutable historical snapshots.
+        _idx_item, idx_run = self._latest_index_item_and_run(source_url)
 
         if commit:
             self.session.commit()
@@ -877,7 +1010,7 @@ class ExtractionService:
 
         if idx_run is None:
             raise RuntimeError(
-                "Detail overwrite succeeded in listings, but no existing index run was found for this URL. "
+                "Detail state update succeeded in listings, but no existing index run was found for this URL. "
                 "Run the regular scraper first so the listing exists in extraction_runs/items."
             )
 

@@ -8,6 +8,8 @@ from .auth import require_api_key
 from .db import Base, engine, get_session
 from .schemas import (
     DetailQueueOut,
+    ExistingListingsIn,
+    ExistingListingsOut,
     ExtractionBatchIn,
     ExtractionBatchOut,
     ExtractionIn,
@@ -41,7 +43,14 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     def health(settings: Settings = Depends(get_settings)) -> dict:
-        return {"ok": True, "service": "legal-list-extractor", "db": settings.database_url}
+        # Never expose database hosts or credentials through an unauthenticated
+        # health endpoint. The driver name is enough for operational checks.
+        db_backend = settings.database_url.split(":", 1)[0].split("+", 1)[0]
+        return {
+            "ok": True,
+            "service": "legal-list-extractor",
+            "db": db_backend,
+        }
 
     @app.post("/api/v1/extractions", response_model=ExtractionOut, dependencies=[Depends(require_api_key)])
     def create_extraction(payload: ExtractionIn, session: Session = Depends(get_session)) -> ExtractionOut:
@@ -85,6 +94,21 @@ def create_app() -> FastAPI:
     ) -> DetailQueueOut:
         urls = ExtractionService(session).detail_queue(domain=domain, url_contains=url_contains, limit=limit)
         return DetailQueueOut(urls=urls)
+
+    # Recovery helper: lets an interrupted sitemap run validate only URLs that
+    # are not already active, without coupling the scraper directly to SQL.
+    @app.post(
+        "/api/v1/listings/existing",
+        response_model=ExistingListingsOut,
+        dependencies=[Depends(require_api_key)],
+    )
+    def existing_listings(
+        payload: ExistingListingsIn,
+        session: Session = Depends(get_session),
+    ) -> ExistingListingsOut:
+        return ExistingListingsOut(
+            urls=ExtractionService(session).existing_active_urls(payload.urls)
+        )
 
     # Inventory cycle endpoints used only by the regular/index runner.
     @app.post(

@@ -44,7 +44,16 @@ services:
       # Index runner uses this endpoint
       API_ENDPOINT: http://api:8787/api/v1/extractions
       API_KEY: ${API_KEY}
-      SCRAPER_DOMAIN_CONCURRENCY: ${SCRAPER_DOMAIN_CONCURRENCY:-21}
+      SCRAPER_API_TIMEOUT_SECONDS: ${SCRAPER_API_TIMEOUT_SECONDS:-180}
+      SCRAPER_DOMAIN_CONCURRENCY: ${SCRAPER_DOMAIN_CONCURRENCY:-6}
+      SCRAPER_VALIDATE_LISTING_URLS: ${SCRAPER_VALIDATE_LISTING_URLS:-1}
+      SCRAPER_PROXY_URL: ${SCRAPER_PROXY_URL:-}
+      LISTING_VALIDATION_CONCURRENCY: ${LISTING_VALIDATION_CONCURRENCY:-72}
+      LISTING_VALIDATION_DOMAIN_CONCURRENCY: ${LISTING_VALIDATION_DOMAIN_CONCURRENCY:-6}
+      LISTING_VALIDATION_HEAD_DELAY_MS: ${LISTING_VALIDATION_HEAD_DELAY_MS:-75}
+      LISTING_VALIDATION_GET_DELAY_MS: ${LISTING_VALIDATION_GET_DELAY_MS:-100}
+      LISTING_VALIDATION_TIMEOUT_S: ${LISTING_VALIDATION_TIMEOUT_S:-20}
+      LISTING_VALIDATION_RETRIES: ${LISTING_VALIDATION_RETRIES:-3}
       TARGETS_FILE: /app/targets.yml
       CONTENT_SCRIPT_PATH: /app/content.js
       TZ: Europe/Sofia
@@ -55,6 +64,7 @@ services:
       # Realistimo (Cloudflare-protected) persistent session (optional)
       REALISTIMO_PROFILE_DIR: /data/realistimo-profile
       REALISTIMO_STORAGE_STATE_PATH: /data/realistimo-profile/storage_state.json
+      IMOTEKA_STORAGE_STATE_PATH: /app/data/imoteka-storage-state.json
 
       # Detail runner defaults (can be overridden on CLI)
       API_BASE: http://api:8787
@@ -81,6 +91,47 @@ services:
     depends_on:
       - api
       - profile-sink
+
+  # Optional daily full index inventory. It runs all sitemap and browser targets;
+  # failed/incomplete domains are never reconciled.
+  index_scheduler:
+    profiles: ["schedule"]
+    build:
+      context: ./scraper
+      dockerfile: Dockerfile
+    environment:
+      API_ENDPOINT: http://api:8787/api/v1/extractions
+      API_KEY: ${API_KEY}
+      SCRAPER_API_TIMEOUT_SECONDS: ${SCRAPER_API_TIMEOUT_SECONDS:-180}
+      SCRAPER_DOMAIN_CONCURRENCY: ${SCRAPER_DOMAIN_CONCURRENCY:-6}
+      SCRAPER_VALIDATE_LISTING_URLS: ${SCRAPER_VALIDATE_LISTING_URLS:-1}
+      SCRAPER_PROXY_URL: ${SCRAPER_PROXY_URL:-}
+      LISTING_VALIDATION_CONCURRENCY: ${LISTING_VALIDATION_CONCURRENCY:-72}
+      LISTING_VALIDATION_DOMAIN_CONCURRENCY: ${LISTING_VALIDATION_DOMAIN_CONCURRENCY:-6}
+      LISTING_VALIDATION_HEAD_DELAY_MS: ${LISTING_VALIDATION_HEAD_DELAY_MS:-75}
+      LISTING_VALIDATION_GET_DELAY_MS: ${LISTING_VALIDATION_GET_DELAY_MS:-100}
+      LISTING_VALIDATION_TIMEOUT_S: ${LISTING_VALIDATION_TIMEOUT_S:-20}
+      LISTING_VALIDATION_RETRIES: ${LISTING_VALIDATION_RETRIES:-3}
+      TARGETS_FILE: /app/targets.yml
+      CONTENT_SCRIPT_PATH: /app/content.js
+      SITE_PROFILES_PATH: /app/site_profiles.json
+      INDEX_RUN_AT: ${INDEX_RUN_AT:-00:30}
+      INDEX_RUN_ON_START: ${INDEX_RUN_ON_START:-0}
+      TZ: Europe/Sofia
+      REALISTIMO_PROFILE_DIR: /data/realistimo-profile
+      REALISTIMO_STORAGE_STATE_PATH: /data/realistimo-profile/storage_state.json
+      IMOTEKA_STORAGE_STATE_PATH: /app/data/imoteka-storage-state.json
+    shm_size: "1gb"
+    volumes:
+      - ./scraper/targets.yml:/app/targets.yml:ro
+      - ./extension/content.js:/app/content.js:ro
+      - ./site_profiles.json:/app/site_profiles.json:ro
+      - ./scraper:/app/scraper:ro
+      - ./data/realistimo-profile:/data/realistimo-profile
+      - ./data:/app/data
+    command: ["python", "-m", "scraper.index_scheduler"]
+    depends_on:
+      - api
 
   # Optional: runs the detail runner once per day and drains the whole queue (multi-domain).
   # Enable with: docker compose --profile schedule up -d detail_scheduler

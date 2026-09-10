@@ -379,7 +379,16 @@
         for (const s of Array.from(document.querySelectorAll('script[type="application/ld+json"]'))) {
           const t = (s.textContent || "").trim();
           if (!t) continue;
-          try { out.push(JSON.parse(t)); } catch (_) {}
+          try {
+            const parsed = JSON.parse(t);
+            const blocks = Array.isArray(parsed) ? parsed : [parsed];
+            for (const block of blocks) {
+              if (block && typeof block === "object" && !Array.isArray(block)) {
+                out.push(block);
+                if (out.length >= maxBlocks) break;
+              }
+            }
+          } catch (_) {}
           if (out.length >= maxBlocks) break;
         }
         return out;

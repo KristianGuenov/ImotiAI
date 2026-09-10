@@ -62,6 +62,14 @@ class DetailQueueOut(BaseModel):
     urls: List[str] = Field(default_factory=list)
 
 
+class ExistingListingsIn(BaseModel):
+    urls: List[str] = Field(default_factory=list, max_length=5000)
+
+
+class ExistingListingsOut(BaseModel):
+    urls: List[str] = Field(default_factory=list)
+
+
 # --- Inventory lifecycle ---
 
 

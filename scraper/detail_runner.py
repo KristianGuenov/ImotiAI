@@ -1,13 +1,21 @@
 import argparse
 import asyncio
+from io import BytesIO
 import os
 import re
+import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
+from urllib.parse import unquote, urlsplit
+import xml.etree.ElementTree as ET
 
 import httpx
 import yaml
+try:
+    from scraper.listing_health import canonical_domain, classify_response
+except ImportError:  # direct execution: python /app/scraper/detail_runner.py
+    from listing_health import canonical_domain, classify_response
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 
 
@@ -91,6 +99,128 @@ def _structured_signal_count(value: Any) -> int:
     if isinstance(value, list):
         return sum(1 for item in value if item not in (None, "", [], {}))
     return 1 if value not in (None, "", [], {}) else 0
+
+
+def _document_extension(url: str) -> str:
+    path = urlsplit(url or "").path.lower()
+    for extension in (".pdf", ".docx"):
+        if path.endswith(extension):
+            return extension
+    return ""
+
+
+def clean_extracted_media(listing_url: str, extracted: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove known publisher chrome from canonical listing media."""
+    host = (urlsplit(listing_url or "").hostname or "").lower().removeprefix("www.")
+    deny: Tuple[str, ...] = ()
+    if host == "sofia.bg":
+        deny = ("/image/layout_set_logo", "/o/epsof-0601-theme/")
+    elif host == "estates.ubb.bg":
+        deny = ("/images/og_image.png", "/images/arrow-top.png")
+    elif host == "bbr.bg":
+        deny = ("/static/dist/assets/images/default-card-img.png",)
+
+    def allowed(value: Any) -> bool:
+        if not isinstance(value, str) or not value.strip():
+            return False
+        normalized = value.strip()
+        if host == "bbr.bg" and normalized.rstrip("/") == "https://bbr.bg":
+            return False
+        lowered = normalized.lower()
+        return not any(part in lowered for part in deny)
+
+    images: List[str] = []
+    for value in extracted.get("images") or []:
+        if allowed(value) and value not in images:
+            images.append(value.strip())
+    cover = extracted.get("image")
+    extracted["images"] = images
+    extracted["image"] = cover.strip() if allowed(cover) else (images[0] if images else None)
+    return extracted
+
+
+def _docx_text(content: bytes) -> str:
+    """Extract readable text from a DOCX without needing a full office suite."""
+    with zipfile.ZipFile(BytesIO(content)) as archive:
+        document_xml = archive.read("word/document.xml")
+    root = ET.fromstring(document_xml)
+    paragraphs: List[str] = []
+    for paragraph in root.iter():
+        if not paragraph.tag.endswith("}p"):
+            continue
+        pieces = [
+            node.text or ""
+            for node in paragraph.iter()
+            if node.tag.endswith("}t") and node.text
+        ]
+        text = "".join(pieces).strip()
+        if text:
+            paragraphs.append(text)
+    return "\n".join(paragraphs)
+
+
+async def extract_document_detail(url: str, rule: "DomainRule") -> Dict[str, Any]:
+    """Download and extract municipal PDF/DOCX auction notices."""
+    extension = _document_extension(url)
+    if not extension:
+        raise RuntimeError("unsupported document type")
+
+    max_bytes = 30 * 1024 * 1024
+    headers = {
+        "user-agent": (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
+    async with httpx.AsyncClient(
+        timeout=max(15.0, rule.timeout_ms / 1000.0),
+        follow_redirects=True,
+        headers=headers,
+    ) as client:
+        response = await client.get(url)
+        response.raise_for_status()
+        if len(response.content) > max_bytes:
+            raise RuntimeError(f"document exceeds {max_bytes} bytes")
+        content = response.content
+
+    metadata: Dict[str, Any] = {
+        "document_type": extension.lstrip("."),
+        "content_bytes": len(content),
+    }
+    if extension == ".pdf":
+        from pypdf import PdfReader
+
+        reader = PdfReader(BytesIO(content))
+        parts = [(page.extract_text() or "").strip() for page in reader.pages]
+        text = "\n\n".join(part for part in parts if part)
+        metadata["page_count"] = len(reader.pages)
+        pdf_meta = reader.metadata or {}
+        title = str(pdf_meta.get("/Title") or "").strip()
+    else:
+        text = _docx_text(content)
+        title = ""
+
+    text = text.strip()
+    if not text:
+        raise RuntimeError("document contains no extractable text")
+
+    if not title:
+        title = unquote(urlsplit(url).path.rsplit("/", 1)[-1])
+
+    # Keep a compact legacy description and a substantially larger raw evidence
+    # block. This avoids unbounded API payloads while retaining the actual notice.
+    return {
+        "ok": True,
+        "title": title[:512],
+        "description": text[:50_000],
+        "image": None,
+        "images": [],
+        "raw_kv": [{"label": key, "value": value} for key, value in metadata.items()],
+        "raw_text_blocks": [
+            {"type": "auction_document", "text": text[:500_000]}
+        ],
+        "signals": metadata,
+    }
 
 
 def has_meaningful_detail(extracted: Dict[str, Any], min_desc_len: int) -> Tuple[bool, str]:
@@ -508,7 +638,15 @@ def make_detail_payload(
     images = extracted.get("images") or []
 
     # Raw harvest fields (may be missing depending on extractor version)
-    raw_jsonld = extracted.get("raw_jsonld") or []
+    raw_jsonld_input = extracted.get("raw_jsonld") or []
+    raw_jsonld = []
+    pending_jsonld = list(raw_jsonld_input) if isinstance(raw_jsonld_input, list) else []
+    while pending_jsonld:
+        block = pending_jsonld.pop(0)
+        if isinstance(block, dict):
+            raw_jsonld.append(block)
+        elif isinstance(block, list):
+            pending_jsonld[0:0] = block
     raw_state_blobs = extracted.get("raw_state_blobs") or []
     raw_kv = extracted.get("raw_kv") or []
     raw_text_blocks = extracted.get("raw_text_blocks") or []
@@ -574,12 +712,37 @@ async def scrape_one(
     ctx = await pool.get(rule)
     page = await ctx.new_page()
     try:
-        await page.goto(url, wait_until=rule.wait_until, timeout=rule.timeout_ms)
+        response = await page.goto(
+            url, wait_until=rule.wait_until, timeout=rule.timeout_ms
+        )
+        if response is None:
+            raise RuntimeError("detail navigation returned no response")
         await page.wait_for_timeout(350)
         await _auto_scroll(page)
         await page.wait_for_timeout(250)
 
+        final_url = page.url or url
+        if canonical_domain(final_url) != canonical_domain(url):
+            raise RuntimeError(f"detail redirected across domains: {final_url}")
+        if not rule.allows_url(final_url):
+            raise RuntimeError(f"detail redirected off listing path: {final_url}")
+        rendered = (await page.content()).encode("utf-8", "replace")[:131072]
+        health = classify_response(
+            original_url=url,
+            final_url=final_url,
+            status_code=response.status,
+            body=rendered,
+            content_type=(await response.all_headers()).get("content-type", ""),
+            body_expected=True,
+        )
+        if not health.valid:
+            raise RuntimeError(
+                f"detail page is {health.state}: {health.reason} "
+                f"status={health.status_code}"
+            )
+
         extracted = await extractor.extract_detail(page, rule.extractor_script)
+        extracted = clean_extracted_media(url, extracted)
         title = extracted.get("title")
         desc = extracted.get("description")
         image = extracted.get("image")
@@ -716,7 +879,11 @@ async def run_once(
 
                         for attempt in range(1, attempts + 1):
                             try:
-                                payload = await scrape_one(pool, extractor, rule, u)
+                                if _document_extension(u):
+                                    extracted = await extract_document_detail(u, rule)
+                                    payload = make_detail_payload(u, extracted)
+                                else:
+                                    payload = await scrape_one(pool, extractor, rule, u)
                                 if isinstance(payload, dict):
                                     items = payload.get("items") or []
                                     raw = ""
@@ -757,8 +924,9 @@ async def run_once(
 async def main_async(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Detail runner (multi-domain): pulls listing URLs from the DB queue and overwrites raw_text "
-            "on the existing index item (no new rows)."
+            "Detail runner (multi-domain): pulls listing URLs from the DB queue "
+            "and stores the latest raw detail snapshot on the canonical listing "
+            "without rewriting historical index extraction rows."
         )
     )
 

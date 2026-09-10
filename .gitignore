@@ -14,6 +14,10 @@ node_modules/
 # Docker
 *.log
 
+# Browser authentication/session exports
+data/*-storage-state.json
+data/*-profile/
+
 # Build / cache
 dist/
 build/

@@ -18,6 +18,14 @@ defaults:
   include_any: []
   include_regex: []
 domains:
+- domain: alo.bg
+  concurrency: 2
+  min_desc_len: 40
+  include_any: []
+  include_regex:
+  - /[^/?]+-[0-9]+/?$
+  exclude_any:
+  - /obiavi/
 - domain: address.bg
   concurrency: 2
   min_desc_len: 60
@@ -44,6 +52,13 @@ domains:
   include_any:
   include_regex: []
   exclude_any: []
+- domain: bulgarianproperties.com
+  concurrency: 2
+  min_desc_len: 40
+  include_any: []
+  include_regex: []
+  exclude_any:
+  - /sale_properties/
 - domain: domaza.bg
   concurrency: 2
   min_desc_len: 60
@@ -56,12 +71,20 @@ domains:
   include_any: []
   include_regex: []
   exclude_any: []
+- domain: dskhome.bg
+  concurrency: 2
+  min_desc_len: 40
+  include_any:
+  - /listings/
+  include_regex: []
+  exclude_any:
+  - /listings/search
+  - /listings/advanced-search
 - domain: era.bg
   concurrency: 2
   min_desc_len: 60
   include_any:
-  - /sell/
-  - /sell
+  - /imoti/oferta/
   include_regex: []
   exclude_any: []
 - domain: holmes.bg
@@ -77,6 +100,14 @@ domains:
   min_desc_len: 60
   include_any:
   - /offer/
+  include_regex: []
+  exclude_any: []
+- domain: home2u.bg
+  concurrency: 2
+  min_desc_len: 40
+  include_any:
+  - /property/
+  - /project/
   include_regex: []
   exclude_any: []
 - domain: imot.bg
@@ -140,6 +171,22 @@ domains:
   - /property
   include_regex: []
   exclude_any: []
+- domain: revolution-estate.bg
+  concurrency: 2
+  min_desc_len: 40
+  include_any:
+  - /imot/
+  include_regex: []
+  exclude_any:
+  - /imoti-za-prodazhda
+- domain: olx.bg
+  concurrency: 2
+  min_desc_len: 40
+  include_any:
+  - /d/ad/
+  include_regex: []
+  exclude_any:
+  - /nedvizhimi-imoti/
 - domain: realistimo.com
   concurrency: 2
   min_desc_len: 60
@@ -169,4 +216,64 @@ domains:
   min_desc_len: 60
   include_any: []
   include_regex: []
+  exclude_any: []
+- domain: novitesgradi.bg
+  concurrency: 2
+  min_desc_len: 80
+  include_any:
+  - /sgrada/
+  include_regex: []
+  exclude_any: []
+- domain: imotno.bg
+  concurrency: 2
+  min_desc_len: 40
+  include_any:
+  - /property/
+  include_regex: []
+  exclude_any:
+  - /share-image
+- domain: sales.bcpea.org
+  concurrency: 2
+  min_desc_len: 80
+  include_any:
+  - /properties/
+  include_regex:
+  - /properties/[0-9]+$
+  exclude_any: []
+- domain: estate-sales.uslugi.io
+  concurrency: 2
+  min_desc_len: 80
+  include_any:
+  - /upcoming-public/view/
+  include_regex: []
+  exclude_any: []
+- domain: estates.ubb.bg
+  concurrency: 2
+  min_desc_len: 60
+  include_any:
+  - /sales/
+  include_regex: []
+  exclude_any: []
+- domain: bbr.bg
+  concurrency: 2
+  min_desc_len: 80
+  include_any:
+  - /bg/nedvijimi-imoti/
+  include_regex: []
+  exclude_any: []
+- domain: sofia.bg
+  concurrency: 2
+  min_desc_len: 80
+  include_any:
+  - /w/
+  include_regex:
+  - /w/[0-9]+$
+  exclude_any: []
+- domain: plovdiv.bg
+  concurrency: 2
+  min_desc_len: 80
+  include_any:
+  - /wp-content/uploads/
+  include_regex:
+  - \\.(?:pdf|docx)$
   exclude_any: []

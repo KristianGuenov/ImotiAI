@@ -1,19 +1,27 @@
 import argparse
 import asyncio
+import gzip
+import html
 import json
 import os
 from pathlib import Path
 import random
 import re
 import sys
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+from urllib.parse import urljoin, urlsplit, urlunsplit, parse_qsl, urlencode
 import time
 
 import httpx
 import yaml
+from curl_cffi.requests import AsyncSession as CurlAsyncSession
+try:
+    from scraper.listing_health import ListingHealthValidator
+except ImportError:  # direct execution: python /app/scraper/runner.py
+    from listing_health import ListingHealthValidator
 from playwright.async_api import (
     async_playwright,
     Browser,
@@ -35,6 +43,25 @@ def canonical_domain(url: str) -> str:
         return host
     except Exception:
         return ""
+
+
+def playwright_proxy_from_env() -> Optional[Dict[str, str]]:
+    """Translate SCRAPER_PROXY_URL into Playwright launch options safely."""
+    value = (os.getenv("SCRAPER_PROXY_URL") or "").strip()
+    if not value:
+        return None
+    parts = urlsplit(value)
+    if not parts.scheme or not parts.hostname:
+        raise ValueError("SCRAPER_PROXY_URL must be an absolute proxy URL")
+    authority = parts.hostname
+    if parts.port:
+        authority = f"{authority}:{parts.port}"
+    result = {"server": f"{parts.scheme}://{authority}"}
+    if parts.username:
+        result["username"] = parts.username
+    if parts.password:
+        result["password"] = parts.password
+    return result
 
 
 @dataclass
@@ -70,6 +97,35 @@ class ScrapeTarget:
     # If post_strategy == per_target, flush a batch every N pages (0 => one huge POST at end)
     post_batch_pages: int = 50
 
+    # Completeness evidence. Inventory targets are expected to discover at least
+    # one listing unless explicitly configured otherwise.
+    min_items: int = 1
+
+    # Sitemap inventory mode. This is preferable to browser pagination when a
+    # source publishes authoritative listing sitemaps.
+    sitemap_url_regex: Optional[str] = None
+    listing_url_regex: Optional[str] = None
+    listing_title_regex: Optional[str] = None
+    listing_title_exclude_regex: Optional[str] = None
+    max_sitemaps: int = 100
+    post_batch_items: int = 1000
+    sitemap_min_unique_ratio: float = 0.0
+
+    # When true, this target is the complete inventory source for its domain.
+    # Older browser partitions remain in YAML as documented fallbacks but are
+    # not scheduled alongside the authoritative feed.
+    authoritative_domain_inventory: bool = False
+
+    # Per-listing activity validation before database insertion. auto uses a
+    # paced lightweight status/redirect check. Sources with untrustworthy HEAD
+    # responses can explicitly use get; protected live feeds can use source.
+    validation_mode: str = "auto"
+
+    # OLX publishes a current JSON inventory but caps any individual query at
+    # 1,000 visible results.  The category id identifies the sale/rent root;
+    # the adapter partitions it by all Bulgarian regions and price ranges.
+    api_category_id: Optional[int] = None
+
 
 class TargetsLoader:
     def __init__(self, targets_file: str):
@@ -83,20 +139,49 @@ class TargetsLoader:
             raise ValueError("targets.yml must contain a YAML list of targets")
 
         targets: List[ScrapeTarget] = []
+        seen_names: set[str] = set()
+        seen_sources: Dict[Tuple[str, str], str] = {}
         for i, item in enumerate(raw):
             if not isinstance(item, dict):
                 raise ValueError(f"targets.yml entry #{i} must be a mapping/object")
+            if item.get("enabled", True) is False:
+                continue
 
             name = str(item.get("name") or f"target-{i}")
             url = str(item.get("url") or "").strip()
             if not url:
                 raise ValueError(f"targets.yml entry '{name}' is missing url")
 
+            if name in seen_names:
+                raise ValueError(f"targets.yml contains duplicate target name '{name}'")
+            seen_names.add(name)
+
+            mode = str(item.get("mode") or "extract_once").strip()
+            if mode not in {
+                "extract_once",
+                "http_inventory",
+                "load_more_then_extract",
+                "load_more_pagination",
+                "olx_api",
+                "pagination",
+                "sitemap",
+            }:
+                raise ValueError(
+                    f"targets.yml entry '{name}' has unsupported mode '{mode}'"
+                )
+            source_key = (mode, url)
+            if source_key in seen_sources:
+                raise ValueError(
+                    "targets.yml contains duplicate source URL for "
+                    f"'{seen_sources[source_key]}' and '{name}': {url}"
+                )
+            seen_sources[source_key] = name
+
             targets.append(
                 ScrapeTarget(
                     name=name,
                     url=url,
-                    mode=str(item.get("mode") or "extract_once").strip(),
+                    mode=mode,
                     max_pages=int(item.get("max_pages") or 25),
                     delay_ms=int(item.get("delay_ms") or 1500),
                     start_page=(
@@ -116,18 +201,100 @@ class TargetsLoader:
                     timeout_ms=int(item.get("timeout_ms") or 45_000),
                     post_strategy=str(item.get("post_strategy") or "per_page").strip(),
                     post_batch_pages=int(item.get("post_batch_pages") or 50),
+                    min_items=max(0, int(item.get("min_items", 1))),
+                    sitemap_url_regex=(
+                        str(item["sitemap_url_regex"])
+                        if item.get("sitemap_url_regex")
+                        else None
+                    ),
+                    listing_url_regex=(
+                        str(item["listing_url_regex"])
+                        if item.get("listing_url_regex")
+                        else None
+                    ),
+                    listing_title_regex=(
+                        str(item["listing_title_regex"])
+                        if item.get("listing_title_regex")
+                        else None
+                    ),
+                    listing_title_exclude_regex=(
+                        str(item["listing_title_exclude_regex"])
+                        if item.get("listing_title_exclude_regex")
+                        else None
+                    ),
+                    max_sitemaps=max(1, int(item.get("max_sitemaps") or 100)),
+                    post_batch_items=max(1, int(item.get("post_batch_items") or 1000)),
+                    sitemap_min_unique_ratio=max(
+                        0.0,
+                        min(1.0, float(item.get("sitemap_min_unique_ratio") or 0)),
+                    ),
+                    authoritative_domain_inventory=bool(
+                        item.get("authoritative_domain_inventory", False)
+                    ),
+                    validation_mode=str(
+                        item.get("validation_mode") or "auto"
+                    ).strip().lower(),
+                    api_category_id=(
+                        int(item["api_category_id"])
+                        if item.get("api_category_id") is not None
+                        else None
+                    ),
                 )
             )
+
+            if mode == "olx_api" and not targets[-1].api_category_id:
+                raise ValueError(
+                    f"targets.yml entry '{name}' requires api_category_id"
+                )
+
+            if targets[-1].validation_mode not in {"auto", "head", "get", "source"}:
+                raise ValueError(
+                    f"targets.yml entry '{name}' has unsupported "
+                    f"validation_mode '{targets[-1].validation_mode}'"
+                )
+
+        authoritative_domains = {
+            canonical_domain(target.url)
+            for target in targets
+            if target.authoritative_domain_inventory
+        }
+        if authoritative_domains:
+            targets = [
+                target
+                for target in targets
+                if canonical_domain(target.url) not in authoritative_domains
+                or target.authoritative_domain_inventory
+            ]
 
         return targets
 
 
 class ApiClient:
-    def __init__(self, endpoint: str, api_key: str):
+    def __init__(
+        self,
+        endpoint: str,
+        api_key: str,
+        *,
+        dry_run: bool = False,
+        health_validator: Optional[ListingHealthValidator] = None,
+        targets_by_name: Optional[Dict[str, ScrapeTarget]] = None,
+    ):
         self.endpoint = endpoint.rstrip("/")
         self.api_key = api_key
-        self._client = httpx.AsyncClient(timeout=60.0)
+        self.dry_run = bool(dry_run)
+        # A 1,000-item inventory upsert can legitimately take longer than a
+        # minute while several domains flush concurrently.  Keep this separate
+        # from listing-health timeouts: timing out an otherwise healthy API
+        # write would fail a complete source after the expensive validation
+        # pass has already succeeded.
+        api_timeout = max(
+            60.0,
+            float(os.getenv("SCRAPER_API_TIMEOUT_SECONDS", "180")),
+        )
+        self._client = httpx.AsyncClient(timeout=api_timeout)
         self._cycle_by_domain: Dict[str, int] = {}
+        self.health_validator = health_validator
+        self.targets_by_name = dict(targets_by_name or {})
 
         # Normal endpoint is .../api/v1/extractions. Keep backwards compatibility
         # with that env var and derive the inventory-cycle endpoint from it.
@@ -155,6 +322,10 @@ class ApiClient:
     async def start_inventory_cycle(
         self, domain: str, targets_expected: int
     ) -> Dict[str, Any]:
+        if self.dry_run:
+            cycle_id = -1
+            self.set_inventory_cycle(domain, cycle_id)
+            return {"id": cycle_id, "domain": domain, "status": "dry_run"}
         url = f"{self.api_base}/inventory-cycles/start"
         payload = {
             "domain": domain,
@@ -178,6 +349,14 @@ class ApiClient:
         targets_failed: int,
         abort_reason: Optional[str] = None,
     ) -> Dict[str, Any]:
+        if self.dry_run:
+            self.set_inventory_cycle(domain, None)
+            return {
+                "id": int(cycle_id),
+                "domain": domain,
+                "status": "dry_run",
+                "reconciliationApplied": False,
+            }
         url = f"{self.api_base}/inventory-cycles/{int(cycle_id)}/complete"
         meta: Dict[str, Any] = {"runnerCompletedAt": utc_now_iso()}
         if abort_reason:
@@ -207,12 +386,962 @@ class ApiClient:
             payload = dict(payload)
             payload["meta"] = meta
 
+        target_name = str((payload.get("meta") or {}).get("targetName") or "")
+        target = self.targets_by_name.get(target_name)
+        if self.health_validator is not None and target is not None:
+            payload = await self.health_validator.filter_payload(payload, target)
+
+        validation_meta = (payload.get("meta") or {}).get("listingValidation") or {}
+        unverifiable_urls = validation_meta.get("unverifiableUrls") or []
+        if not payload.get("items") and not unverifiable_urls:
+            return {
+                "id": None,
+                "sourceUrl": source_url,
+                "skipped": True,
+                "reason": "no_valid_items",
+            }
+
+        if self.dry_run:
+            item_count = len(payload.get("items") or [])
+            print(
+                f"DRY_RUN post source={source_url} items={item_count} "
+                f"cycle_id={cycle_id}"
+            )
+            return {"id": None, "sourceUrl": source_url, "dryRun": True}
+
         r = await self._client.post(self.endpoint, headers=self._headers(), json=payload)
         r.raise_for_status()
         try:
             return r.json()
         except Exception:
             return {"ok": True}
+
+    async def existing_active_urls(self, urls: List[str]) -> set[str]:
+        """Return active URLs already stored, for safe interrupted-run repair."""
+        if self.dry_run or not urls:
+            return set()
+        endpoint = f"{self.api_base}/listings/existing"
+        response = await self._client.post(
+            endpoint,
+            headers=self._headers(),
+            json={"urls": list(dict.fromkeys(urls))[:5000]},
+        )
+        response.raise_for_status()
+        data = response.json()
+        return {
+            value
+            for value in data.get("urls", [])
+            if isinstance(value, str) and value
+        }
+
+
+class SitemapExtractor:
+    """Discover listing inventory from standards-compliant XML sitemaps."""
+
+    def __init__(self, user_agent: Optional[str] = None):
+        self.user_agent = user_agent or os.getenv(
+            "SCRAPER_USER_AGENT",
+            "ImotiAI-Inventory/1.0",
+        )
+
+    @staticmethod
+    def _local_name(tag: str) -> str:
+        return str(tag).rsplit("}", 1)[-1]
+
+    async def _fetch_xml(self, client: httpx.AsyncClient, url: str) -> bytes:
+        last_error: Optional[Exception] = None
+        for attempt in range(1, 4):
+            try:
+                response = await client.get(url, follow_redirects=True)
+                response.raise_for_status()
+                return response.content
+            except Exception as exc:
+                last_error = exc
+                if attempt < 3:
+                    await asyncio.sleep(float(attempt))
+        raise RuntimeError(
+            f"sitemap fetch failed after 3 attempts: {url}: {last_error}"
+        )
+
+    def _parse_document(
+        self,
+        xml_bytes: bytes,
+    ) -> Tuple[str, List[str], List[Dict[str, Any]]]:
+        if xml_bytes[:2] == b"\x1f\x8b":
+            xml_bytes = gzip.decompress(xml_bytes)
+        root = ET.fromstring(xml_bytes)
+        root_name = self._local_name(root.tag)
+
+        if root_name == "sitemapindex":
+            children: List[str] = []
+            for node in root:
+                if self._local_name(node.tag) != "sitemap":
+                    continue
+                loc = next(
+                    (
+                        (child.text or "").strip()
+                        for child in node
+                        if self._local_name(child.tag) == "loc"
+                    ),
+                    "",
+                )
+                if loc:
+                    children.append(loc)
+            return root_name, children, []
+
+        if root_name != "urlset":
+            raise ValueError(f"Unsupported sitemap root element: {root_name}")
+
+        items: List[Dict[str, Any]] = []
+        for node in root:
+            if self._local_name(node.tag) != "url":
+                continue
+
+            loc = ""
+            lastmod = ""
+            images: List[str] = []
+            image_title = ""
+            image_caption = ""
+
+            for child in node:
+                child_name = self._local_name(child.tag)
+                if child_name == "loc":
+                    loc = (child.text or "").strip()
+                elif child_name == "lastmod":
+                    lastmod = (child.text or "").strip()
+                elif child_name == "image":
+                    for image_child in child:
+                        image_name = self._local_name(image_child.tag)
+                        value = (image_child.text or "").strip()
+                        if image_name == "loc" and value:
+                            images.append(value)
+                        elif image_name == "title" and value and not image_title:
+                            image_title = value
+                        elif (
+                            image_name == "caption"
+                            and value
+                            and not image_caption
+                        ):
+                            image_caption = value
+
+            if not loc:
+                continue
+            deduped_images = list(dict.fromkeys(images))[:8]
+            items.append(
+                {
+                    "title": image_title or image_caption or None,
+                    "url": loc,
+                    "image": deduped_images[0] if deduped_images else None,
+                    "images": deduped_images,
+                    "texts": [lastmod] if lastmod else [],
+                    "rawText": None,
+                }
+            )
+
+        return root_name, [], items
+
+    async def scrape_target(
+        self,
+        api: ApiClient,
+        target: ScrapeTarget,
+        *,
+        seen_item_keys: set,
+        resume_after_items: int = 0,
+        skip_existing: bool = False,
+    ) -> Tuple[int, int, Optional[int]]:
+        child_rx = (
+            re.compile(target.sitemap_url_regex, re.I)
+            if target.sitemap_url_regex
+            else None
+        )
+        listing_rx = (
+            re.compile(target.listing_url_regex, re.I)
+            if target.listing_url_regex
+            else None
+        )
+        batch_size = max(1, min(5000, int(target.post_batch_items)))
+        max_sitemaps = max(1, min(1000, int(target.max_sitemaps)))
+
+        queue: List[str] = [target.url]
+        queued = {target.url}
+        fetched = 0
+        posts_done = 0
+        last_id: Optional[int] = None
+        pending: Dict[str, Dict[str, Any]] = {}
+        failed_sitemaps: List[Dict[str, str]] = []
+        matching_rows = 0
+        resume_after_items = max(0, int(resume_after_items))
+
+        async def flush(reason: str) -> None:
+            nonlocal posts_done, last_id, pending
+            if not pending:
+                return
+            candidates = list(pending.values())
+            skipped_existing = 0
+            if skip_existing:
+                existing = await api.existing_active_urls(
+                    [str(item.get("url") or "") for item in candidates]
+                )
+                candidates = [
+                    item
+                    for item in candidates
+                    if str(item.get("url") or "") not in existing
+                ]
+                skipped_existing = len(pending) - len(candidates)
+            if not candidates:
+                print(
+                    f"[{target.name}] SITEMAP_SKIP_EXISTING "
+                    f"items={skipped_existing} unique_total={len(seen_item_keys)}"
+                )
+                pending = {}
+                return
+            payload = {
+                "dataVersion": 1,
+                "sourceUrl": target.url,
+                "pageTitle": target.name,
+                "extractedAt": utc_now_iso(),
+                "meta": {
+                    "mode": "sitemap",
+                    "targetName": target.name,
+                    "sitemapsFetched": fetched,
+                    "sitemapFailures": list(failed_sitemaps),
+                    "uniqueItemsTotal": len(seen_item_keys),
+                    "skippedExisting": skipped_existing,
+                    "flushReason": reason,
+                },
+                "items": candidates,
+            }
+            response = await api.post_extraction(payload)
+            last_id = (
+                response.get("id") if isinstance(response, dict) else last_id
+            )
+            posts_done += 1
+            print(
+                f"[{target.name}] SITEMAP_POST items={len(candidates)} "
+                f"skipped_existing={skipped_existing} "
+                f"unique_total={len(seen_item_keys)} reason={reason}"
+            )
+            pending = {}
+
+        headers = {
+            "User-Agent": self.user_agent,
+            "Accept": "application/xml,text/xml",
+        }
+        timeout = httpx.Timeout(max(30.0, target.timeout_ms / 1000.0))
+        async with httpx.AsyncClient(headers=headers, timeout=timeout) as client:
+            while queue:
+                if fetched >= max_sitemaps:
+                    raise RuntimeError(
+                        "incomplete_target: sitemap count exceeds "
+                        f"max_sitemaps={max_sitemaps}"
+                    )
+
+                sitemap_url = queue.pop(0)
+                try:
+                    xml_bytes = await self._fetch_xml(client, sitemap_url)
+                except Exception as exc:
+                    # A rotating sitemap index can briefly point at one stale
+                    # child. Harvest the other children, but fail the target
+                    # after flushing so this partial inventory remains disabled.
+                    if sitemap_url == target.url:
+                        raise
+                    failed_sitemaps.append(
+                        {"url": sitemap_url, "error": str(exc)[:1000]}
+                    )
+                    print(
+                        f"[{target.name}] SITEMAP_CHILD_FAILED "
+                        f"url={sitemap_url} err={exc}"
+                    )
+                    continue
+                fetched += 1
+                root_name, child_urls, items = self._parse_document(xml_bytes)
+                print(
+                    f"[{target.name}] sitemap={fetched} type={root_name} "
+                    f"children={len(child_urls)} urls={len(items)} url={sitemap_url}"
+                )
+
+                for child_url in child_urls:
+                    if child_url.startswith("www."):
+                        child_url = f"https://{child_url}"
+                    else:
+                        child_url = urljoin(sitemap_url, child_url)
+                    if child_rx and not child_rx.search(child_url):
+                        continue
+                    if child_url not in queued:
+                        queued.add(child_url)
+                        queue.append(child_url)
+
+                for item in items:
+                    listing_url = str(item.get("url") or "")
+                    if listing_rx and not listing_rx.search(listing_url):
+                        continue
+                    matching_rows += 1
+                    key = f"url::{listing_url}"
+                    if key in seen_item_keys:
+                        continue
+                    seen_item_keys.add(key)
+                    # Recovery-only checkpointing skips candidates already
+                    # validated and posted by a recently interrupted run.  The
+                    # normal scheduler always leaves this at zero so complete
+                    # inventory cycles still revalidate every candidate.
+                    if len(seen_item_keys) <= resume_after_items:
+                        continue
+                    pending[key] = item
+                    if len(pending) >= batch_size:
+                        await flush(reason=f"batch_{batch_size}")
+
+        await flush(reason="final")
+        if failed_sitemaps:
+            raise RuntimeError(
+                "incomplete_target: "
+                f"{len(failed_sitemaps)} sitemap children failed; "
+                "reachable children were harvested but reconciliation is disabled"
+            )
+        if target.sitemap_min_unique_ratio and matching_rows:
+            unique_ratio = len(seen_item_keys) / matching_rows
+            if unique_ratio < target.sitemap_min_unique_ratio:
+                raise RuntimeError(
+                    "incomplete_target: sitemap shard overlap produced "
+                    f"{len(seen_item_keys)}/{matching_rows} unique URLs "
+                    f"(ratio={unique_ratio:.3f}, required="
+                    f"{target.sitemap_min_unique_ratio:.3f})"
+                )
+        return fetched, posts_done, last_id
+
+
+class HttpInventoryExtractor:
+    """Read a complete server-rendered paginated catalogue without Chromium.
+
+    Address/Realto catalogue pages contain a JSON paginator in the
+    ``offers-object`` HTML attribute.  Fetching each explicit page number is
+    both faster and less lossy than driving Vue pagination clicks, while the
+    normal ApiClient validation still checks every listing URL before insert.
+    """
+
+    _OFFERS_OBJECT_RE = re.compile(
+        rb':offers-object\s*=\s*"([^"]+)"', re.I
+    )
+    _BROWSER_UA = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/128.0.0.0 Safari/537.36"
+    )
+
+    @classmethod
+    def parse_page(cls, body: bytes) -> Dict[str, Any]:
+        match = cls._OFFERS_OBJECT_RE.search(body)
+        if not match:
+            raise RuntimeError(
+                "incomplete_target: structured offers-object was not found"
+            )
+        encoded = match.group(1).decode("utf-8", errors="strict")
+        try:
+            payload = json.loads(html.unescape(encoded))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "incomplete_target: invalid offers-object JSON"
+            ) from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+            raise RuntimeError(
+                "incomplete_target: offers-object has no data array"
+            )
+        return payload
+
+    @staticmethod
+    def page_url(base_url: str, page_number: int) -> str:
+        parts = urlsplit(base_url)
+        query = dict(parse_qsl(parts.query, keep_blank_values=True))
+        query["page"] = str(max(1, int(page_number)))
+        return urlunsplit(
+            (parts.scheme, parts.netloc, parts.path, urlencode(query), "")
+        )
+
+    @staticmethod
+    def offer_item(offer: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        url = str(offer.get("url") or "").replace("\\/", "/").strip()
+        if not url or int(offer.get("is_active", 1) or 0) != 1:
+            return None
+        location = ((offer.get("location") or {}).get("translated") or {}).get(
+            "name"
+        )
+        quarter = ((offer.get("quarter") or {}).get("translated") or {}).get(
+            "name"
+        )
+        title_parts = [offer.get("estateTypeLabel"), location, quarter]
+        title = ", ".join(str(value) for value in title_parts if value)
+        offer_id = offer.get("id")
+        if offer_id:
+            title = f"{title}, {offer_id}" if title else str(offer_id)
+
+        images = [offer.get("imageUrl370")]
+        images.extend(offer.get("restOfTheImagesURLs370") or [])
+        images = [
+            str(value).replace("\\/", "/")
+            for value in images
+            if isinstance(value, str) and value.strip()
+        ]
+        images = list(dict.fromkeys(images))[:8]
+        return {
+            "title": title or None,
+            "url": url,
+            "image": images[0] if images else None,
+            "images": images,
+            "texts": [],
+            "rawText": None,
+        }
+
+    async def scrape_target(
+        self,
+        api: ApiClient,
+        target: ScrapeTarget,
+        *,
+        seen_item_keys: set,
+    ) -> Tuple[int, int, Optional[int]]:
+        listing_rx = (
+            re.compile(target.listing_url_regex, re.I)
+            if target.listing_url_regex
+            else None
+        )
+        concurrency = max(
+            1,
+            min(12, int(os.getenv("HTTP_INVENTORY_PAGE_CONCURRENCY", "4"))),
+        )
+        batch_size = max(1, min(5000, int(target.post_batch_items)))
+        delay_seconds = max(0, min(20_000, int(target.delay_ms))) / 1000.0
+        timeout_seconds = max(30, int(target.timeout_ms / 1000))
+        headers = {
+            "User-Agent": os.getenv("SCRAPER_BROWSER_USER_AGENT", self._BROWSER_UA),
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Language": "bg-BG,bg;q=0.9,en;q=0.7",
+        }
+        client_options: Dict[str, Any] = dict(
+            impersonate="chrome",
+            headers=headers,
+            max_clients=concurrency,
+        )
+        proxy_url = (os.getenv("SCRAPER_PROXY_URL") or "").strip()
+        if proxy_url:
+            client_options["proxy"] = proxy_url
+        client = CurlAsyncSession(**client_options)
+
+        async def fetch_page(page_number: int):
+            url = self.page_url(target.url, page_number)
+            last_error: Optional[Exception] = None
+            for attempt in range(1, 4):
+                try:
+                    response = await client.get(
+                        url,
+                        timeout=timeout_seconds,
+                        allow_redirects=True,
+                    )
+                    if response.status_code >= 400:
+                        raise RuntimeError(
+                            f"HTTP {response.status_code} for {url}"
+                        )
+                    page_payload = self.parse_page(response.content)
+                    actual_page = int(page_payload.get("current_page") or 0)
+                    if actual_page != page_number:
+                        raise RuntimeError(
+                            "incomplete_target: requested page "
+                            f"{page_number} returned page {actual_page}"
+                        )
+                    return page_number, page_payload
+                except Exception as exc:
+                    last_error = exc
+                    if attempt < 3:
+                        await asyncio.sleep(float(attempt))
+            raise RuntimeError(
+                f"incomplete_target: page {page_number} failed after 3 attempts: "
+                f"{last_error}"
+            )
+
+        pending: Dict[str, Dict[str, Any]] = {}
+        source_item_keys: set[str] = set()
+        posts_done = 0
+        last_id: Optional[int] = None
+        pages_visited = 0
+
+        async def flush(reason: str) -> None:
+            nonlocal pending, posts_done, last_id
+            if not pending:
+                return
+            payload = {
+                "dataVersion": 1,
+                "sourceUrl": target.url,
+                "pageTitle": target.name,
+                "extractedAt": utc_now_iso(),
+                "meta": {
+                    "mode": "http_inventory",
+                    "targetName": target.name,
+                    "pagesVisitedSoFar": pages_visited,
+                    "uniqueItemsTotal": len(seen_item_keys),
+                    "flushReason": reason,
+                },
+                "items": list(pending.values()),
+            }
+            result = await api.post_extraction(payload)
+            last_id = result.get("id") if isinstance(result, dict) else last_id
+            posts_done += 1
+            print(
+                f"[{target.name}] HTTP_POST items={len(pending)} "
+                f"unique_total={len(seen_item_keys)} reason={reason}"
+            )
+            pending = {}
+
+        first_number, first = await fetch_page(1)
+        try:
+            total_pages = int(first.get("last_page") or 0)
+            total_items = int(first.get("total") or 0)
+            if total_pages < 1 or total_items < 1:
+                raise RuntimeError(
+                    "incomplete_target: catalogue reported no pages/items"
+                )
+            configured_end = (
+                int(target.end_page)
+                if target.end_page is not None
+                else total_pages
+            )
+            final_page = min(total_pages, configured_end)
+            if target.end_page is None and total_pages > int(target.max_pages):
+                raise RuntimeError(
+                    "incomplete_target: reported last_page="
+                    f"{total_pages} exceeds max_pages={target.max_pages}"
+                )
+            print(
+                f"[{target.name}] INVENTORY total={total_items} "
+                f"pages={total_pages} fetch=1-{final_page} concurrency={concurrency}"
+            )
+
+            page_numbers = list(range(1, final_page + 1))
+            for offset in range(0, len(page_numbers), concurrency):
+                numbers = page_numbers[offset : offset + concurrency]
+                results = []
+                for number in numbers:
+                    if number == first_number:
+                        results.append((number, first))
+                    else:
+                        results.append(fetch_page(number))
+                resolved = []
+                coroutines = [value for value in results if asyncio.iscoroutine(value)]
+                fetched = await asyncio.gather(*coroutines) if coroutines else []
+                fetched_by_page = {number: payload for number, payload in fetched}
+                for value in results:
+                    if asyncio.iscoroutine(value):
+                        continue
+                    resolved.append(value)
+                resolved.extend(fetched_by_page.items())
+
+                for page_number, page_payload in sorted(resolved):
+                    pages_visited += 1
+                    rows = page_payload.get("data") or []
+                    if page_number < total_pages and not rows:
+                        raise RuntimeError(
+                            f"incomplete_target: empty page {page_number}/{total_pages}"
+                        )
+                    for offer in rows:
+                        if not isinstance(offer, dict):
+                            continue
+                        source_url = str(offer.get("url") or "").replace(
+                            "\\/", "/"
+                        ).strip()
+                        if source_url:
+                            source_item_keys.add(f"url::{source_url}")
+                        item = self.offer_item(offer)
+                        if not item:
+                            continue
+                        if listing_rx and not listing_rx.search(item["url"]):
+                            continue
+                        key = f"url::{item['url']}"
+                        if key in seen_item_keys:
+                            continue
+                        seen_item_keys.add(key)
+                        pending[key] = item
+                        if len(pending) >= batch_size:
+                            await flush(reason=f"batch_{batch_size}")
+                if delay_seconds:
+                    await asyncio.sleep(delay_seconds)
+        finally:
+            await client.close()
+
+        await flush(reason="final")
+        # During a full run, every reported result should be represented.  A
+        # small allowance covers offers moving between pages while the source
+        # is updated; a larger gap makes the target incomplete and prevents DB
+        # reconciliation/deactivation.
+        if target.end_page is None:
+            minimum_complete = max(target.min_items, int(total_items * 0.98))
+            if len(source_item_keys) < minimum_complete:
+                raise RuntimeError(
+                    "incomplete_target: visited "
+                    f"{len(source_item_keys)}/{total_items} reported rows"
+                )
+            print(
+                f"[{target.name}] INVENTORY_COMPLETE rows={len(source_item_keys)} "
+                f"active={len(seen_item_keys)} "
+                f"inactive={len(source_item_keys) - len(seen_item_keys)}"
+            )
+        return pages_visited, posts_done, last_id
+
+
+class OlxApiExtractor:
+    """Enumerate OLX's capped official catalogue without losing the long tail.
+
+    OLX reports the real ``visible_total_count`` but exposes at most 1,000
+    results for one query.  Each root category is therefore split across all
+    28 Bulgarian regions.  Region queries that are still capped are recursively
+    divided into overlapping price ranges; URL deduplication removes boundary
+    overlap while ensuring that no fractional-price value can fall in a gap.
+    """
+
+    API_URL = "https://www.olx.bg/api/v1/offers"
+    REGION_IDS = (
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
+        15, 16, 17, 18, 19, 20, 21, 23, 24, 25, 26, 27, 28, 306,
+    )
+    QUERY_CAP = 1000
+
+    @staticmethod
+    def offer_item(offer: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if str(offer.get("status") or "").lower() != "active":
+            return None
+        if str(offer.get("offer_type") or "offer").lower() != "offer":
+            return None
+        url = str(offer.get("url") or "").strip()
+        if not url:
+            return None
+        images: List[str] = []
+        for photo in offer.get("photos") or []:
+            if not isinstance(photo, dict):
+                continue
+            link = str(photo.get("link") or "").strip()
+            if not link:
+                continue
+            images.append(
+                link.replace("{width}", "800").replace("{height}", "600")
+            )
+        images = list(dict.fromkeys(images))[:8]
+        return {
+            "title": str(offer.get("title") or "").strip() or None,
+            "url": url,
+            "image": images[0] if images else None,
+            "images": images,
+            "texts": [],
+            "rawText": None,
+        }
+
+    @staticmethod
+    def _price_params(
+        lower: Optional[int], upper: Optional[int]
+    ) -> Dict[str, str]:
+        params: Dict[str, str] = {}
+        if lower is not None:
+            params["filter_float_price:from"] = str(lower)
+        if upper is not None:
+            params["filter_float_price:to"] = str(upper)
+        return params
+
+    @staticmethod
+    def _split_pivot(lower: Optional[int], upper: Optional[int]) -> int:
+        if lower is None and upper is None:
+            return 100_000
+        if lower is None:
+            return max(1, int(upper) // 2)
+        if upper is None:
+            return max(int(lower) + 1, int(lower) * 2)
+        return int(lower) + max(1, (int(upper) - int(lower)) // 2)
+
+    async def scrape_target(
+        self,
+        api: ApiClient,
+        target: ScrapeTarget,
+        *,
+        seen_item_keys: set,
+    ) -> Tuple[int, int, Optional[int]]:
+        category_id = int(target.api_category_id or 0)
+        if category_id <= 0:
+            raise RuntimeError("incomplete_target: invalid OLX category id")
+        listing_rx = (
+            re.compile(target.listing_url_regex, re.I)
+            if target.listing_url_regex
+            else None
+        )
+        concurrency = max(
+            1, min(8, int(os.getenv("OLX_API_CONCURRENCY", "4")))
+        )
+        timeout_seconds = max(20, int(target.timeout_ms / 1000))
+        batch_size = max(1, min(5000, int(target.post_batch_items)))
+        pace_seconds = max(
+            0.0, float(os.getenv("OLX_API_START_DELAY_MS", "100")) / 1000.0
+        )
+        options: Dict[str, Any] = dict(
+            impersonate="chrome",
+            max_clients=concurrency,
+            headers={
+                "Accept": "application/json",
+                "Accept-Language": "bg-BG,bg;q=0.9,en;q=0.7",
+            },
+        )
+        proxy_url = (os.getenv("SCRAPER_PROXY_URL") or "").strip()
+        if proxy_url:
+            options["proxy"] = proxy_url
+        client = CurlAsyncSession(**options)
+        request_sem = asyncio.Semaphore(concurrency)
+        pace_lock = asyncio.Lock()
+        next_start = 0.0
+        pages_visited = 0
+        response_cache: Dict[Tuple[Tuple[str, str], ...], Dict[str, Any]] = {}
+
+        async def request_json(
+            params: Optional[Dict[str, Any]] = None,
+            *,
+            absolute_url: Optional[str] = None,
+            cache: bool = False,
+        ) -> Dict[str, Any]:
+            nonlocal next_start, pages_visited
+            query = {
+                "offset": 0,
+                "limit": 40,
+                "category_id": category_id,
+            }
+            if params:
+                query.update(params)
+            cache_key = tuple(sorted((str(k), str(v)) for k, v in query.items()))
+            if cache and not absolute_url and cache_key in response_cache:
+                return response_cache[cache_key]
+            last_error: Optional[Exception] = None
+            for attempt in range(1, 4):
+                try:
+                    async with request_sem:
+                        if pace_seconds:
+                            async with pace_lock:
+                                now = time.monotonic()
+                                if next_start > now:
+                                    await asyncio.sleep(next_start - now)
+                                next_start = time.monotonic() + pace_seconds
+                        if absolute_url:
+                            response = await client.get(
+                                absolute_url,
+                                timeout=timeout_seconds,
+                                allow_redirects=True,
+                            )
+                        else:
+                            response = await client.get(
+                                self.API_URL,
+                                params=query,
+                                timeout=timeout_seconds,
+                                allow_redirects=True,
+                            )
+                    pages_visited += 1
+                    if response.status_code in {403, 429} or response.status_code >= 500:
+                        raise RuntimeError(f"HTTP {response.status_code}")
+                    if response.status_code >= 400:
+                        raise RuntimeError(
+                            f"incomplete_target: OLX API HTTP {response.status_code}"
+                        )
+                    payload = response.json()
+                    if not isinstance(payload, dict) or not isinstance(
+                        payload.get("data"), list
+                    ):
+                        raise RuntimeError(
+                            "incomplete_target: OLX API returned no data array"
+                        )
+                    if cache and not absolute_url:
+                        response_cache[cache_key] = payload
+                    return payload
+                except Exception as exc:
+                    last_error = exc
+                    if attempt < 3:
+                        await asyncio.sleep(float(attempt))
+            raise RuntimeError(
+                f"incomplete_target: OLX API failed after 3 attempts: {last_error}"
+            )
+
+        def visible_count(payload: Dict[str, Any]) -> int:
+            return int((payload.get("metadata") or {}).get("visible_total_count") or 0)
+
+        async def find_leaves(
+            region_id: int,
+            lower: Optional[int] = None,
+            upper: Optional[int] = None,
+            depth: int = 0,
+        ) -> List[Tuple[int, Optional[int], Optional[int], int]]:
+            params: Dict[str, Any] = {"region_id": region_id}
+            params.update(self._price_params(lower, upper))
+            payload = await request_json(params, cache=True)
+            count = visible_count(payload)
+            if count <= self.QUERY_CAP:
+                return [(region_id, lower, upper, count)] if count else []
+            if depth >= 18:
+                raise RuntimeError(
+                    "incomplete_target: OLX partition remained capped "
+                    f"region={region_id} range={lower}-{upper} count={count}"
+                )
+            pivot = self._split_pivot(lower, upper)
+            if pivot == lower or pivot == upper:
+                raise RuntimeError(
+                    "incomplete_target: OLX price partition cannot be reduced "
+                    f"region={region_id} range={lower}-{upper}"
+                )
+            left, right = await asyncio.gather(
+                find_leaves(region_id, lower, pivot, depth + 1),
+                find_leaves(region_id, pivot, upper, depth + 1),
+            )
+            return left + right
+
+        async def enumerate_leaf(
+            leaf: Tuple[int, Optional[int], Optional[int], int],
+            depth: int = 0,
+        ) -> Tuple[int, List[Dict[str, Any]]]:
+            region_id, lower, upper, expected = leaf
+            params: Dict[str, Any] = {"region_id": region_id}
+            params.update(self._price_params(lower, upper))
+            payload = await request_json(params, cache=True)
+            items: Dict[str, Dict[str, Any]] = {}
+            followed: set[str] = set()
+            while True:
+                for offer in payload.get("data") or []:
+                    if not isinstance(offer, dict):
+                        continue
+                    item = self.offer_item(offer)
+                    if not item:
+                        continue
+                    if listing_rx and not listing_rx.search(str(item["url"])):
+                        continue
+                    items[str(item["url"])] = item
+                next_link = (payload.get("links") or {}).get("next")
+                if isinstance(next_link, dict):
+                    next_link = next_link.get("href")
+                next_url = str(next_link or "").strip()
+                if not next_url:
+                    break
+                if next_url in followed:
+                    # OLX occasionally emits a self-referential final `next`
+                    # link. Stop here; the leaf-level completeness check below
+                    # still rejects the partition if the loop ended early.
+                    break
+                followed.add(next_url)
+                if len(followed) > 30:
+                    raise RuntimeError(
+                        "incomplete_target: OLX leaf exceeded 30 API pages"
+                    )
+                payload = await request_json(absolute_url=next_url)
+            minimum = int(expected * 0.98)
+            if len(items) < minimum:
+                # A small number of OLX queries advertise fewer than 1,000
+                # results yet stop producing pages early. Narrower price
+                # queries expose the otherwise hidden tail, so subdivide the
+                # leaf and retain the same completeness requirement.
+                if depth >= 18:
+                    raise RuntimeError(
+                        "incomplete_target: OLX leaf recovered "
+                        f"{len(items)}/{expected} items for region={region_id} "
+                        f"range={lower}-{upper}"
+                    )
+                pivot = self._split_pivot(lower, upper)
+                if pivot == lower or pivot == upper:
+                    raise RuntimeError(
+                        "incomplete_target: OLX incomplete leaf cannot be split "
+                        f"region={region_id} range={lower}-{upper}"
+                    )
+                left_params: Dict[str, Any] = {"region_id": region_id}
+                left_params.update(self._price_params(lower, pivot))
+                right_params: Dict[str, Any] = {"region_id": region_id}
+                right_params.update(self._price_params(pivot, upper))
+                left_payload, right_payload = await asyncio.gather(
+                    request_json(left_params, cache=True),
+                    request_json(right_params, cache=True),
+                )
+                left_count = visible_count(left_payload)
+                right_count = visible_count(right_payload)
+                if left_count >= expected and right_count >= expected:
+                    raise RuntimeError(
+                        "incomplete_target: OLX incomplete leaf did not narrow "
+                        f"region={region_id} range={lower}-{upper}"
+                    )
+                child_results = await asyncio.gather(
+                    enumerate_leaf(
+                        (region_id, lower, pivot, left_count), depth + 1
+                    ),
+                    enumerate_leaf(
+                        (region_id, pivot, upper, right_count), depth + 1
+                    ),
+                )
+                for _, child_items in child_results:
+                    for child_item in child_items:
+                        items[str(child_item["url"])] = child_item
+                if len(items) < minimum:
+                    raise RuntimeError(
+                        "incomplete_target: OLX subdivided leaf recovered "
+                        f"{len(items)}/{expected} items for region={region_id} "
+                        f"range={lower}-{upper}"
+                    )
+            return expected, list(items.values())
+
+        posts_done = 0
+        last_id: Optional[int] = None
+        try:
+            root = await request_json(cache=True)
+            reported_total = visible_count(root)
+            if reported_total < target.min_items:
+                raise RuntimeError(
+                    f"incomplete_target: OLX reports only {reported_total} items"
+                )
+            region_leaves = await asyncio.gather(
+                *(find_leaves(region_id) for region_id in self.REGION_IDS)
+            )
+            leaves = [leaf for group in region_leaves for leaf in group]
+            print(
+                f"[{target.name}] OLX_INVENTORY total={reported_total} "
+                f"regions={len(self.REGION_IDS)} leaves={len(leaves)} "
+                f"concurrency={concurrency}"
+            )
+            leaf_results = await asyncio.gather(
+                *(enumerate_leaf(leaf) for leaf in leaves)
+            )
+            items_by_url: Dict[str, Dict[str, Any]] = {}
+            partition_total = 0
+            for expected, items in leaf_results:
+                partition_total += expected
+                for item in items:
+                    items_by_url[str(item["url"])] = item
+
+            minimum_complete = max(target.min_items, int(reported_total * 0.98))
+            if len(items_by_url) < minimum_complete:
+                raise RuntimeError(
+                    "incomplete_target: OLX recovered "
+                    f"{len(items_by_url)}/{reported_total} reported items "
+                    f"(partition_total={partition_total})"
+                )
+
+            values = list(items_by_url.values())
+            for offset in range(0, len(values), batch_size):
+                batch = values[offset : offset + batch_size]
+                for item in batch:
+                    seen_item_keys.add(f"url::{item['url']}")
+                payload = {
+                    "dataVersion": 1,
+                    "sourceUrl": target.url,
+                    "pageTitle": target.name,
+                    "extractedAt": utc_now_iso(),
+                    "meta": {
+                        "mode": "olx_api",
+                        "targetName": target.name,
+                        "reportedTotal": reported_total,
+                        "partitionTotal": partition_total,
+                        "partitionLeaves": len(leaves),
+                    },
+                    "items": batch,
+                }
+                result = await api.post_extraction(payload)
+                last_id = result.get("id") if isinstance(result, dict) else last_id
+                posts_done += 1
+                print(
+                    f"[{target.name}] OLX_POST items={len(batch)} "
+                    f"unique_total={len(seen_item_keys)}"
+                )
+        finally:
+            await client.close()
+        return pages_visited, posts_done, last_id
 
 
 class PlaywrightExtractor:
@@ -285,16 +1414,30 @@ class PlaywrightExtractor:
             self._site_profiles_cache = ""
             return ""
 
+    def _storage_state_path(self, base_url: str) -> Optional[str]:
+        host = self._host_of(base_url).removeprefix("www.")
+        env_by_host = {
+            "imoteka.bg": "IMOTEKA_STORAGE_STATE_PATH",
+        }
+        env_name = env_by_host.get(host)
+        if not env_name:
+            return None
+        return (os.getenv(env_name) or "").strip() or None
+
     async def _new_context(
         self, browser: Browser, base_url: str = ""
     ) -> BrowserContext:
-        ctx = await browser.new_context(
+        context_options: Dict[str, Any] = dict(
             user_agent=self.user_agent,
             viewport={"width": 1365, "height": 900},
             java_script_enabled=True,
             bypass_csp=True,
             ignore_https_errors=True,
         )
+        storage_state_path = self._storage_state_path(base_url)
+        if storage_state_path and Path(storage_state_path).is_file():
+            context_options["storage_state"] = storage_state_path
+        ctx = await browser.new_context(**context_options)
 
         # Some portals run scripts that reference extension APIs (chrome.*). Provide a minimal stub.
         await ctx.add_init_script(
@@ -369,7 +1512,12 @@ class PlaywrightExtractor:
         except Exception:
             pass
 
-        # ✅ Option A: Inject built-in site profiles FIRST (so content.js can use them in Playwright mode)
+        # Inject JSON overrides written by profile_sink before content.js. Previously
+        # this loader existed but was never called, so Playwright silently ignored
+        # the domain profiles used to identify listing cards and pagination.
+        await ctx.add_init_script(script=self._load_site_overrides_json_script())
+
+        # Inject optional JS profiles before content.js as well.
         sp = self._load_site_profiles_script()
         if sp:
             await ctx.add_init_script(script=sp)
@@ -393,6 +1541,7 @@ class PlaywrightExtractor:
 
         # Fallback: try injecting again (rare; e.g. if page replaced context by cross-origin nav)
         try:
+            await page.add_init_script(self._load_site_overrides_json_script())
             await page.add_init_script(self._load_site_profiles_script() or "")
         except Exception:
             pass
@@ -426,7 +1575,30 @@ class PlaywrightExtractor:
                 raise RuntimeError(
                     "Extraction returned ok:true but missing result object"
                 )
-            return json.loads(json.dumps(result, ensure_ascii=False))
+            result = json.loads(json.dumps(result, ensure_ascii=False))
+
+            # Domaza's cards use a URL shape that the generic content script
+            # does not currently recognise. Read only its property anchors as a
+            # narrow fallback; the target's strict listing_url_regex still runs
+            # afterwards and canonicalizes the /_hasSearch/1/ suffix.
+            if self._host_of(page.url or "").endswith("domaza.bg"):
+                fallback_items = await page.evaluate(
+                    """() => Array.from(
+                      document.querySelectorAll('a[href*="-16-"][href*="-p/"]')
+                    ).map(a => ({
+                      url: a.href,
+                      title: (a.getAttribute('title') || a.textContent || '')
+                        .replace(/\\s+/g, ' ').trim()
+                    }))"""
+                )
+                if isinstance(fallback_items, list):
+                    combined = list(result.get("items") or [])
+                    combined.extend(
+                        item for item in fallback_items if isinstance(item, dict)
+                    )
+                    result["items"] = combined
+
+            return result
 
         try:
             return await _do()
@@ -586,6 +1758,39 @@ class PlaywrightExtractor:
             return self._propertybg_page_url(base_url, page_num)
         if self._is_realestatesbg(base_url):
             return self._realestatesbg_page_url(base_url, page_num)
+        host = self._host_of(base_url).removeprefix("www.")
+        if host in {
+            "alo.bg",
+            "olx.bg",
+            "revolution-estate.bg",
+            "sales.bcpea.org",
+        }:
+            parts = urlsplit(base_url)
+            query = dict(parse_qsl(parts.query, keep_blank_values=True))
+            page_key = "p" if host == "sales.bcpea.org" else "page"
+            if page_num <= 1:
+                query.pop(page_key, None)
+            else:
+                query[page_key] = str(page_num)
+            return urlunsplit(
+                (
+                    parts.scheme,
+                    parts.netloc,
+                    parts.path,
+                    urlencode(query, doseq=True),
+                    "",
+                )
+            )
+        if host == "bulgarianproperties.com":
+            parts = urlsplit(base_url)
+            path = re.sub(r"/index\d*\.html$", "/index.html", parts.path)
+            if page_num > 1:
+                path = path.rsplit("/index.html", 1)[0] + f"/index{page_num}.html"
+            return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
+        if host == "estates.ubb.bg":
+            parts = urlsplit(base_url)
+            path = "/" if page_num <= 1 else f"/list/page:{page_num}"
+            return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
         return None
 
     def _imotbg_page_url(self, base_url: str, page_num: int) -> str:
@@ -625,8 +1830,17 @@ class PlaywrightExtractor:
         )
 
     def _propertybg_page_url(self, base_url: str, page_num: int) -> str:
-        """property.bg search paging uses `page=N` query param."""
+        """Build property.bg clean-path or legacy query pagination URLs."""
         parts = urlsplit(base_url)
+        if "/selection/" in parts.path:
+            path = re.sub(r"/page/\d+/?$", "/", parts.path).rstrip("/")
+            if page_num > 1:
+                path = f"{path}/page/{max(1, int(page_num))}/"
+            else:
+                path = f"{path}/"
+            return urlunsplit(
+                (parts.scheme, parts.netloc, path, parts.query, parts.fragment)
+            )
         q = dict(parse_qsl(parts.query, keep_blank_values=True))
         q["page"] = str(max(1, int(page_num)))
         new_query = urlencode(q, doseq=True)
@@ -667,6 +1881,20 @@ class PlaywrightExtractor:
             )
         except Exception:
             return True  # if we can't evaluate, don't block pagination
+
+    async def _has_later_page_bcpea(self, page: Page, current_page: int) -> bool:
+        """BCPEA has numbered pagination but no next link on the final page."""
+        try:
+            highest_page = await page.evaluate(
+                """() => Math.max(0, ...Array.from(document.querySelectorAll('a[href]'))
+                  .map(a => {
+                    try { return Number(new URL(a.href, location.href).searchParams.get('p')) || 0; }
+                    catch (_) { return 0; }
+                  }))"""
+            )
+            return int(highest_page or 0) > int(current_page)
+        except Exception:
+            return True
 
     async def _ensure_imotiinfo_not_choose(
         self, page: Page, wait_timeout_ms: int
@@ -917,6 +2145,72 @@ class PlaywrightExtractor:
         r = item.get("rawText") or ""
         return f"txt::{t}::{r[:120]}"
 
+    def _filter_payload_items(
+        self, payload: Dict[str, Any], target: ScrapeTarget
+    ) -> Dict[str, Any]:
+        """Apply target-level listing allow-lists and basic URL hygiene.
+
+        Browser extractors intentionally use broad selectors so they survive
+        markup changes. Only same-site HTTP(S) URLs can become listings; optional
+        URL/title rules narrow mixed auction registers to real property.
+        """
+        pattern = target.listing_url_regex
+        items = payload.get("items") if isinstance(payload, dict) else None
+        if not isinstance(items, list):
+            return payload
+
+        url_matcher = re.compile(pattern, re.I) if pattern else None
+        title_matcher = (
+            re.compile(target.listing_title_regex, re.I)
+            if target.listing_title_regex
+            else None
+        )
+        title_exclude_matcher = (
+            re.compile(target.listing_title_exclude_regex, re.I)
+            if target.listing_title_exclude_regex
+            else None
+        )
+        target_domain = canonical_domain(target.url)
+
+        filtered: List[Dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            url = item.get("url")
+            if not isinstance(url, str):
+                continue
+            url = url.strip()
+            if target_domain == "domaza.bg":
+                # Domaza list cards often link to a search-context variant. It is
+                # the same property page, but storing that variant creates noisy
+                # duplicates and makes the strict listing suffix fail.
+                url = re.sub(r"/_hasSearch/1/?$", "/", url, flags=re.I)
+            parts = urlsplit(url)
+            if parts.scheme.lower() not in {"http", "https"}:
+                continue
+            if canonical_domain(url) != target_domain:
+                continue
+            if url_matcher and not url_matcher.search(url):
+                continue
+
+            title = " ".join(
+                str(value or "")
+                for value in (item.get("title"), item.get("rawText"))
+            ).strip()
+            if title_matcher and not title_matcher.search(title):
+                continue
+            if title_exclude_matcher and title_exclude_matcher.search(title):
+                continue
+            normalized_item = dict(item)
+            normalized_item["url"] = url
+            filtered.append(normalized_item)
+
+        payload["items"] = filtered
+        meta = dict(payload.get("meta") or {})
+        meta["targetName"] = target.name
+        payload["meta"] = meta
+        return payload
+
     async def scrape_target(
         self,
         api: ApiClient,
@@ -950,9 +2244,13 @@ class PlaywrightExtractor:
                     )
                 initial_url = partition_start_url
 
-            await page.goto(
+            initial_response = await page.goto(
                 initial_url, wait_until=target.wait_until, timeout=target.timeout_ms
             )
+            if initial_response and initial_response.status >= 400:
+                raise RuntimeError(
+                    f"initial_navigation_http_{initial_response.status}: {initial_url}"
+                )
             await page.wait_for_timeout(700)
             await self._ensure_extractor(page)
 
@@ -969,7 +2267,12 @@ class PlaywrightExtractor:
                     )
 
             if target.mode == "extract_once":
-                payload = await self._extract(page)
+                payload = self._filter_payload_items(
+                    await self._extract(page), target
+                )
+                for item in payload.get("items") or []:
+                    if isinstance(item, dict):
+                        seen_item_keys.add(self._item_key(item))
                 try:
                     items_list = (
                         payload.get("items") if isinstance(payload, dict) else None
@@ -1002,7 +2305,12 @@ class PlaywrightExtractor:
             if target.mode == "load_more_then_extract":
                 lm_stats = await self._load_more(page, target.load_more or {})
                 print(f"[{target.name}] LOAD_MORE stats={lm_stats}")
-                payload = await self._extract(page)
+                payload = self._filter_payload_items(
+                    await self._extract(page), target
+                )
+                for item in payload.get("items") or []:
+                    if isinstance(item, dict):
+                        seen_item_keys.add(self._item_key(item))
                 try:
                     items_list = (
                         payload.get("items") if isinstance(payload, dict) else None
@@ -1093,7 +2401,9 @@ class PlaywrightExtractor:
                 load_more_opts = target.load_more or {}
 
                 for page_no in range(1, max_pages + 1):
-                    payload = await self._extract(page)
+                    payload = self._filter_payload_items(
+                        await self._extract(page), target
+                    )
                     try:
                         items_list = (
                             payload.get("items") if isinstance(payload, dict) else None
@@ -1316,7 +2626,9 @@ class PlaywrightExtractor:
                             f"incomplete_target: imotiinfo_choose_gate page={pages_visited+1} url={page.url}"
                         )
 
-                payload = await self._extract(page)
+                payload = self._filter_payload_items(
+                    await self._extract(page), target
+                )
                 try:
                     items_list = (
                         payload.get("items") if isinstance(payload, dict) else None
@@ -1365,6 +2677,10 @@ class PlaywrightExtractor:
 
                 if sig not in posted_signatures:
                     if post_strategy == "per_page":
+                        if isinstance(items_list, list):
+                            for it in items_list:
+                                if isinstance(it, dict):
+                                    seen_item_keys.add(self._item_key(it))
                         resp = await api.post_extraction(payload)
                         last_id = resp.get("id") if isinstance(resp, dict) else last_id
                         posts_done += 1
@@ -1436,8 +2752,21 @@ class PlaywrightExtractor:
                             )
                             break
 
+                    if (
+                        self._host_of(target.url).removeprefix("www.")
+                        == "sales.bcpea.org"
+                        and not await self._has_later_page_bcpea(
+                            page, current_page_num
+                        )
+                    ):
+                        print(
+                            f"[{target.name}] STOP no_next(last_numbered_page) "
+                            f"page={pages_visited} url={page.url}"
+                        )
+                        break
+
                     try:
-                        await page.goto(
+                        nav_response = await page.goto(
                             manual_next,
                             wait_until=target.wait_until,
                             timeout=target.timeout_ms,
@@ -1446,6 +2775,18 @@ class PlaywrightExtractor:
                         raise RuntimeError(
                             f"incomplete_target: nav_failed page={pages_visited} next={manual_next} err={e}"
                         ) from e
+
+                    if nav_response and nav_response.status in {404, 410}:
+                        print(
+                            f"[{target.name}] STOP http_{nav_response.status} "
+                            f"page={pages_visited} next={manual_next}"
+                        )
+                        break
+                    if nav_response and nav_response.status >= 400:
+                        raise RuntimeError(
+                            f"incomplete_target: http_{nav_response.status} "
+                            f"page={pages_visited} next={manual_next}"
+                        )
 
                     if self._is_imotiinfo(page.url or "") and "/choose/" in (
                         page.url or ""
@@ -1512,6 +2853,15 @@ class PlaywrightExtractor:
             return pages_visited, posts_done, last_id
 
         finally:
+            storage_state_path = self._storage_state_path(target.url)
+            if storage_state_path:
+                try:
+                    Path(storage_state_path).parent.mkdir(parents=True, exist_ok=True)
+                    await ctx.storage_state(path=storage_state_path)
+                except Exception as exc:
+                    print(
+                        f"[{target.name}] WARN could not save storage state: {exc}"
+                    )
             await ctx.close()
 
 
@@ -1525,12 +2875,10 @@ class ScrapeRunner:
         "en.realestates.bg": 4,
     }
 
-    # en.realestates.bg has one very large pagination target, so target-level
-    # concurrency alone cannot help it. The runner creates four non-overlapping
-    # runtime page partitions for that one logical target.
-    PAGE_PARTITION_CONCURRENCY: Dict[str, int] = {
-        "en.realestates.bg": 4,
-    }
+    # Page-number partitioning is intentionally disabled. It can only be safe
+    # with a stable, authoritative upper bound; otherwise a moving catalogue can
+    # leave gaps while still marking the inventory cycle complete.
+    PAGE_PARTITION_CONCURRENCY: Dict[str, int] = {}
 
     def __init__(
         self,
@@ -1540,6 +2888,9 @@ class ScrapeRunner:
         api_key: str,
         headless: bool = True,
         domain_concurrency: int = 1,
+        dry_run: bool = False,
+        sitemap_resume_after_items: int = 0,
+        sitemap_skip_existing: bool = False,
     ):
         self.targets_file = targets_file
         self.content_script_path = content_script_path
@@ -1547,16 +2898,31 @@ class ScrapeRunner:
         self.api_key = api_key
         self.headless = headless
         self.domain_concurrency = max(1, int(domain_concurrency))
+        self.dry_run = bool(dry_run)
+        self.sitemap_resume_after_items = max(
+            0, int(sitemap_resume_after_items)
+        )
+        self.sitemap_skip_existing = bool(sitemap_skip_existing)
 
         self.loader = TargetsLoader(targets_file)
         self.extractor = PlaywrightExtractor(
             content_script_path=content_script_path, headless=headless
         )
+        self.sitemap_extractor = SitemapExtractor()
+        self.http_inventory_extractor = HttpInventoryExtractor()
+        self.olx_api_extractor = OlxApiExtractor()
+        validation_enabled = str(
+            os.getenv("SCRAPER_VALIDATE_LISTING_URLS", "1")
+        ).strip().lower() not in {"0", "false", "no", "off"}
+        self.health_validator = ListingHealthValidator(
+            enabled=validation_enabled
+        )
+        self.last_failed_targets = 0
         self._posted_sigs_by_target: Dict[str, set] = {}
         self._seen_item_keys_by_target: Dict[str, set] = {}
 
     async def _launch_browser(self, p) -> Browser:
-        return await p.chromium.launch(
+        launch_options: Dict[str, Any] = dict(
             headless=self.headless,
             args=[
                 "--disable-dev-shm-usage",
@@ -1565,6 +2931,10 @@ class ScrapeRunner:
                 "--disable-features=IsolateOrigins,site-per-process",
             ],
         )
+        proxy = playwright_proxy_from_env()
+        if proxy:
+            launch_options["proxy"] = proxy
+        return await p.chromium.launch(**launch_options)
 
     def _target_worker_count(self, domain: str, items: List[ScrapeTarget]) -> int:
         configured = int(self.DOMAIN_TARGET_CONCURRENCY.get(domain, 1))
@@ -1642,7 +3012,7 @@ class ScrapeRunner:
         self,
         api: ApiClient,
         target: ScrapeTarget,
-        browser: Browser,
+        browser: Optional[Browser],
     ) -> bool:
         print(f"=== {target.name} ===")
         print(f"URL: {target.url}")
@@ -1660,13 +3030,69 @@ class ScrapeRunner:
             posted = self._posted_sigs_by_target.setdefault(target.name, set())
             seen_keys = self._seen_item_keys_by_target.setdefault(target.name, set())
 
-            pages_visited, posts_done, last_id = await self.extractor.scrape_target(
-                api,
-                target,
-                browser,
-                posted_signatures=posted,
-                seen_item_keys=seen_keys,
+            if target.mode == "sitemap":
+                pages_visited, posts_done, last_id = (
+                    await self.sitemap_extractor.scrape_target(
+                        api,
+                        target,
+                        seen_item_keys=seen_keys,
+                        resume_after_items=self.sitemap_resume_after_items,
+                        skip_existing=self.sitemap_skip_existing,
+                    )
+                )
+            elif target.mode == "http_inventory":
+                pages_visited, posts_done, last_id = (
+                    await self.http_inventory_extractor.scrape_target(
+                        api,
+                        target,
+                        seen_item_keys=seen_keys,
+                    )
+                )
+            elif target.mode == "olx_api":
+                pages_visited, posts_done, last_id = (
+                    await self.olx_api_extractor.scrape_target(
+                        api,
+                        target,
+                        seen_item_keys=seen_keys,
+                    )
+                )
+            else:
+                if browser is None:
+                    raise RuntimeError("browser target was started without a browser")
+                pages_visited, posts_done, last_id = await self.extractor.scrape_target(
+                    api,
+                    target,
+                    browser,
+                    posted_signatures=posted,
+                    seen_item_keys=seen_keys,
+                )
+
+            if len(seen_keys) < target.min_items:
+                raise RuntimeError(
+                    "incomplete_target: discovered "
+                    f"{len(seen_keys)} items; expected at least {target.min_items}"
+                )
+            validation = self.health_validator.stats_for(target.name)
+            allowed_unverifiable = max(5, int(validation.checked * 0.05))
+            if validation.unverifiable > allowed_unverifiable:
+                raise RuntimeError(
+                    "incomplete_target: could not verify "
+                    f"{validation.unverifiable}/{validation.checked} listing URLs; "
+                    f"reasons={dict(validation.reasons.most_common(6))}"
+                )
+            validation_min_items = max(
+                0,
+                int(target.min_items)
+                - min(self.sitemap_resume_after_items, len(seen_keys)),
             )
+            if self.sitemap_skip_existing and target.mode == "sitemap":
+                validation_min_items = 0
+            if validation.accepted < validation_min_items:
+                raise RuntimeError(
+                    "incomplete_target: validated "
+                    f"{validation.accepted} live listings; expected at least "
+                    f"{validation_min_items} in this recovery segment"
+                )
             print(
                 f"DONE target={target.name} pages_visited={pages_visited} "
                 f"posts_done={posts_done} last_extraction_id={last_id}"
@@ -1680,13 +3106,16 @@ class ScrapeRunner:
             # contexts, so one target must never close/relaunch that browser while
             # sibling targets are still using it. A browser-level failure therefore
             # fails this target/domain safely; the lifecycle cycle will not reconcile.
-            print(f"FAILED target={target.name} err={exc}")
+            print(
+                f"FAILED target={target.name} "
+                f"err={type(exc).__name__}: {exc!s}"
+            )
             return False
 
     async def _run_targets_bounded(
         self,
         api: ApiClient,
-        browser: Browser,
+        browser: Optional[Browser],
         work_items: List[ScrapeTarget],
         worker_count: int,
     ) -> List[bool]:
@@ -1779,9 +3208,13 @@ class ScrapeRunner:
                     f"work_items={len(work_items)} target_workers={worker_count}"
                 )
 
-                # One browser process per active domain. Internal target workers use
-                # separate BrowserContexts in that browser.
-                browser = await self._launch_browser(p)
+                # Sitemap-only domains need no Chromium process. Browser targets
+                # share one process and get isolated BrowserContexts.
+                if any(
+                    target.mode not in {"sitemap", "http_inventory", "olx_api"}
+                    for target in work_items
+                ):
+                    browser = await self._launch_browser(p)
 
                 results = await self._run_targets_bounded(
                     api,
@@ -1863,17 +3296,88 @@ class ScrapeRunner:
                     except Exception:
                         pass
 
-    async def run(self, only: Optional[str] = None) -> None:
+    async def run(
+        self,
+        only: Optional[str] = None,
+        only_domain: Optional[str] = None,
+        only_mode: Optional[str] = None,
+        page_limit: Optional[int] = None,
+        exclude_domains: Optional[List[str]] = None,
+    ) -> None:
         all_targets = self.loader.load()
+
+        excluded = {
+            domain.strip().lower().removeprefix("www.")
+            for raw_value in (exclude_domains or [])
+            for domain in str(raw_value).split(",")
+            if domain.strip()
+        }
+        if excluded:
+            all_targets = [
+                target
+                for target in all_targets
+                if canonical_domain(target.url) not in excluded
+            ]
+            print(
+                "RESUME EXCLUDING COMPLETED DOMAINS: "
+                + ", ".join(sorted(excluded))
+            )
 
         if only:
             targets = [t for t in all_targets if t.name == only]
             if not targets:
                 raise ValueError(f"No target named '{only}' in {self.targets_file}")
+            if page_limit is not None:
+                target = targets[0]
+                if target.mode not in {"pagination", "http_inventory"}:
+                    raise ValueError(
+                        "--page-limit is supported for pagination and "
+                        "http_inventory targets"
+                    )
+                start_page = max(1, int(target.start_page or 1))
+                targets = [
+                    replace(
+                        target,
+                        end_page=start_page + max(1, int(page_limit)) - 1,
+                        min_items=1,
+                    )
+                ]
+        elif only_domain:
+            requested_domain = only_domain.strip().lower().removeprefix("www.")
+            targets = [
+                target
+                for target in all_targets
+                if canonical_domain(target.url) == requested_domain
+            ]
+            if not targets:
+                raise ValueError(
+                    f"No enabled targets for domain '{requested_domain}' "
+                    f"in {self.targets_file}"
+                )
+        elif only_mode:
+            targets = [
+                target
+                for target in all_targets
+                if (
+                    target.mode == "sitemap"
+                    if only_mode == "sitemap"
+                    else target.mode != "sitemap"
+                )
+            ]
+            if not targets:
+                raise ValueError(
+                    f"No targets with mode '{only_mode}' in {self.targets_file}"
+                )
         else:
             targets = all_targets
 
-        api = ApiClient(self.api_endpoint, self.api_key)
+        api = ApiClient(
+            self.api_endpoint,
+            self.api_key,
+            dry_run=self.dry_run,
+            health_validator=self.health_validator,
+            targets_by_name={target.name: target for target in targets},
+        )
 
         domain_targets: Dict[str, List[ScrapeTarget]] = {}
         for target in targets:
@@ -1893,16 +3397,24 @@ class ScrapeRunner:
                         "PARTIAL RUN (--only): inventory reconciliation is "
                         "disabled for safety."
                     )
-                    browser = await self._launch_browser(p)
+                    browser = (
+                        None
+                        if targets[0].mode in {
+                            "sitemap", "http_inventory", "olx_api"
+                        }
+                        else await self._launch_browser(p)
+                    )
                     try:
                         ok = await self._run_target(api, targets[0], browser)
                     finally:
                         try:
-                            await browser.close()
+                            if browser is not None:
+                                await browser.close()
                         except Exception:
                             pass
 
                     print(f"SUMMARY ok={1 if ok else 0} fail={0 if ok else 1}")
+                    self.last_failed_targets = 0 if ok else 1
                     return
 
                 configured_target_workers = sum(
@@ -1947,10 +3459,12 @@ class ScrapeRunner:
 
                 total_ok = sum(ok for ok, _fail in domain_results)
                 total_fail = sum(fail for _ok, fail in domain_results)
+                self.last_failed_targets = total_fail
                 print(f"SUMMARY ok={total_ok} fail={total_fail}")
 
             finally:
                 await api.close()
+                await self.health_validator.close()
 
 
 def main():
@@ -1975,6 +3489,38 @@ def main():
         default=None,
     )
     parser.add_argument(
+        "--only-domain",
+        default=None,
+        help=(
+            "Run every enabled target for one domain as a complete, "
+            "reconcilable inventory cycle"
+        ),
+    )
+    parser.add_argument(
+        "--only-mode",
+        choices=["sitemap", "browser"],
+        default=None,
+        help=(
+            "Run only sitemap targets or only browser targets. The browser "
+            "selection includes every non-sitemap mode."
+        ),
+    )
+    parser.add_argument(
+        "--page-limit",
+        type=int,
+        default=None,
+        help="With --only, stop successfully after this many pagination pages",
+    )
+    parser.add_argument(
+        "--exclude-domain",
+        action="append",
+        default=[],
+        help=(
+            "Resume a full run without re-scraping a completed domain. Repeat "
+            "the flag or pass a comma-separated list."
+        ),
+    )
+    parser.add_argument(
         "--headful",
         action="store_true",
         help="Run with a visible browser (headless=false)",
@@ -1988,6 +3534,28 @@ def main():
             "(default: SCRAPER_DOMAIN_CONCURRENCY or 1)"
         ),
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Scrape and validate without writing inventory cycles or extractions",
+    )
+    parser.add_argument(
+        "--sitemap-resume-after-items",
+        type=int,
+        default=0,
+        help=(
+            "Recovery only: with --only on a sitemap target, skip candidates "
+            "already handled by a recently interrupted run"
+        ),
+    )
+    parser.add_argument(
+        "--sitemap-skip-existing",
+        action="store_true",
+        help=(
+            "Recovery only: with --only on a sitemap target, query the API "
+            "and validate/post only URLs not already active"
+        ),
+    )
     args = parser.parse_args()
 
     runner = ScrapeRunner(
@@ -1997,9 +3565,51 @@ def main():
         api_key=api_key,
         headless=not args.headful,
         domain_concurrency=args.domain_concurrency,
+        dry_run=args.dry_run,
+        sitemap_resume_after_items=args.sitemap_resume_after_items,
+        sitemap_skip_existing=args.sitemap_skip_existing,
     )
 
-    asyncio.run(runner.run(only=args.only))
+    if sum(bool(value) for value in (args.only, args.only_domain, args.only_mode)) > 1:
+        raise ValueError(
+            "--only, --only-domain, and --only-mode cannot be combined"
+        )
+    if args.page_limit is not None and not args.only:
+        raise ValueError("--page-limit requires --only")
+    if args.sitemap_resume_after_items and not args.only:
+        raise ValueError("--sitemap-resume-after-items requires --only")
+    if args.sitemap_skip_existing and not args.only:
+        raise ValueError("--sitemap-skip-existing requires --only")
+    if args.sitemap_resume_after_items and targets_file:
+        selected = [
+            target
+            for target in runner.loader.load()
+            if target.name == args.only
+        ]
+        if not selected or selected[0].mode != "sitemap":
+            raise ValueError(
+                "--sitemap-resume-after-items requires a sitemap target"
+            )
+    if args.sitemap_skip_existing:
+        selected = [
+            target
+            for target in runner.loader.load()
+            if target.name == args.only
+        ]
+        if not selected or selected[0].mode != "sitemap":
+            raise ValueError("--sitemap-skip-existing requires a sitemap target")
+
+    asyncio.run(
+        runner.run(
+            only=args.only,
+            only_domain=args.only_domain,
+            only_mode=args.only_mode,
+            page_limit=args.page_limit,
+            exclude_domains=args.exclude_domain,
+        )
+    )
+    if runner.last_failed_targets:
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":
