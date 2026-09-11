@@ -66,6 +66,19 @@ async def _auto_scroll(
         return
 
 
+async def _stable_page_content(page: Page, attempts: int = 6) -> bytes:
+    """Read rendered HTML across one-time SPA hydration navigations."""
+    last_error: Optional[Exception] = None
+    for attempt in range(max(1, attempts)):
+        try:
+            return (await page.content()).encode("utf-8", "replace")[:131072]
+        except Exception as exc:
+            last_error = exc
+            if attempt + 1 < attempts:
+                await page.wait_for_timeout(400)
+    raise RuntimeError(f"detail page never became stable: {last_error}")
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -86,10 +99,35 @@ def _safe_int(x: Any, default: int) -> int:
         return default
 
 
+def _next_queue_offset(current: int, seen: int, posted: int) -> int:
+    """Skip this process's failed rows without hiding them from tomorrow's run."""
+    return max(0, int(current)) + max(0, int(seen) - int(posted))
+
+
 def _nonempty_text(value: Any) -> str:
     if not isinstance(value, str):
         return ""
     return value.strip()
+
+
+_BOILERPLATE_MARKERS = (
+    "използваме бисквитки",
+    "настройки на бисквитките",
+    "отговорно използване на вашите данни",
+    "we use cookies",
+    "cookie preferences",
+    "privacy preferences",
+    "verify you are human",
+    "human verification",
+    "enable javascript and cookies",
+    "checking your browser",
+    "access denied",
+)
+
+
+def _is_boilerplate_text(value: Any) -> bool:
+    text = _nonempty_text(value).lower()
+    return bool(text) and any(marker in text for marker in _BOILERPLATE_MARKERS)
 
 
 def _structured_signal_count(value: Any) -> int:
@@ -119,6 +157,103 @@ def clean_extracted_media(listing_url: str, extracted: Dict[str, Any]) -> Dict[s
         deny = ("/images/og_image.png", "/images/arrow-top.png")
     elif host == "bbr.bg":
         deny = ("/static/dist/assets/images/default-card-img.png",)
+    elif host == "homes.bg":
+        deny = ("/logo_homes.",)
+
+    imot_listing_token: Optional[str] = None
+    if host == "imot.bg":
+        match = re.search(r"/obiava-[^-]*?(\d{12,})-", urlsplit(listing_url).path, re.I)
+        if match:
+            imot_listing_token = match.group(1)
+
+    address_listing_token: Optional[str] = None
+    if host == "address.bg":
+        match = re.search(r"offer(\d+)", urlsplit(listing_url).path, re.I)
+        if match:
+            address_listing_token = match.group(1)
+
+    imoti_net_listing_token: Optional[str] = None
+    if host == "imoti.net":
+        match = re.search(r"/obiava/(\d+)", urlsplit(listing_url).path, re.I)
+        if match:
+            imoti_net_listing_token = match.group(1)
+
+    property_image_token: Optional[str] = None
+    token_patterns = {
+        "suprimmo.bg": r"/imot-(\d+)",
+        "property.bg": r"/property-(\d+)",
+        "luximmo.com": r"luxury-property-(\d+)",
+        "bulgarianproperties.com": r"/AD(\d+)BG_",
+    }
+    if host in token_patterns:
+        match = re.search(token_patterns[host], urlsplit(listing_url).path, re.I)
+        if match:
+            property_image_token = match.group(1)
+
+    anchored_path_prefix: Optional[str] = None
+    if host in {"era.bg", "revolution-estate.bg"}:
+        cover_value = extracted.get("image")
+        if isinstance(cover_value, str):
+            cover_path = urlsplit(cover_value).path.lower()
+            anchor_pattern = r"(/offer/\d+/)" if host == "era.bg" else r"(/estate/\d+/)"
+            match = re.search(anchor_pattern, cover_path)
+            if match:
+                anchored_path_prefix = match.group(1)
+    elif host == "homes.bg":
+        cover_value = extracted.get("image")
+        if isinstance(cover_value, str):
+            cover_path = urlsplit(cover_value).path.lower()
+            if "/" in cover_path.rstrip("/"):
+                anchored_path_prefix = cover_path.rsplit("/", 1)[0] + "/"
+
+    focus_listing_token: Optional[str] = None
+    if host in {"imot.bg", "imoti.info", "holmes.bg", "bazar.bg"}:
+        if imot_listing_token:
+            focus_listing_token = imot_listing_token
+        else:
+            candidates = [extracted.get("image"), *(extracted.get("images") or [])]
+            for candidate in candidates:
+                if not isinstance(candidate, str):
+                    continue
+                match = re.search(r"/[0-9][a-z](\d{12,})_[^/]+$", urlsplit(candidate).path, re.I)
+                if match and "/photosimotbg/" in candidate.lower():
+                    focus_listing_token = match.group(1)
+                    break
+
+    path = urlsplit(listing_url).path
+    numeric_listing_token: Optional[str] = None
+    if host == "mirela.bg":
+        match = re.search(r"-(\d+)/?$", path)
+        numeric_listing_token = match.group(1) if match else None
+    elif host == "sales.bcpea.org":
+        match = re.search(r"/properties/(\d+)/?$", path, re.I)
+        numeric_listing_token = match.group(1) if match else None
+    elif host == "domaza.bg":
+        match = re.search(r"-(\d+)-p/?$", path, re.I)
+        numeric_listing_token = match.group(1) if match else None
+    elif host == "estates.ubb.bg":
+        match = re.search(r"/sales/(\d+)/?$", path, re.I)
+        numeric_listing_token = match.group(1) if match else None
+
+    imotno_token: Optional[str] = None
+    if host == "imotno.bg":
+        match = re.search(r"/property/([0-9a-f-]{36})/?$", path, re.I)
+        imotno_token = match.group(1).lower() if match else None
+
+    ues_image_prefix: Optional[str] = None
+    if host == "ues.bg":
+        cover_value = extracted.get("image")
+        if isinstance(cover_value, str):
+            cover_candidate = unquote(urlsplit(cover_value).query)
+            if "url=" in cover_candidate:
+                cover_candidate = unquote(
+                    cover_candidate.split("url=", 1)[1].split("&", 1)[0]
+                )
+            else:
+                cover_candidate = cover_value
+            match = re.search(r"/offers/(offer_[^/?]*?_\d+_)", cover_candidate, re.I)
+            if match:
+                ues_image_prefix = match.group(1).lower()
 
     def allowed(value: Any) -> bool:
         if not isinstance(value, str) or not value.strip():
@@ -127,12 +262,191 @@ def clean_extracted_media(listing_url: str, extracted: Dict[str, Any]) -> Dict[s
         if host == "bbr.bg" and normalized.rstrip("/") == "https://bbr.bg":
             return False
         lowered = normalized.lower()
+        if host == "olx.bg":
+            # OLX listing galleries use immutable Apollo file URLs. Generic
+            # img-resizer URLs on the same page are recommendation cards and
+            # advertising banners belonging to other offers.
+            media_host = (urlsplit(normalized).hostname or "").lower()
+            return (
+                (
+                    media_host.endswith("apollo.olxcdn.com")
+                    or media_host.endswith(".olx.com")
+                )
+                and "/v1/files/" in urlsplit(normalized).path.lower()
+                and "/image" in urlsplit(normalized).path.lower()
+            )
+        if host == "arcoreal.bg":
+            parsed_media = urlsplit(normalized)
+            return (
+                (parsed_media.hostname or "").lower().removeprefix("www.")
+                == "arcoreal.bg"
+                and parsed_media.path.rstrip("/").lower() == "/image"
+                and bool(re.search(r"(?:^|&)id=\d+(?:&|$)", parsed_media.query))
+            )
+        if host == "buildingbox.bg":
+            parsed_media = urlsplit(normalized)
+            media_host = (parsed_media.hostname or "").lower().removeprefix("www.")
+            media_path = parsed_media.path.lower()
+            return (
+                media_host == "buildingbox.bg"
+                and "/wp-content/uploads/" in media_path
+                and not re.search(r"(?:^|[-_/])logo(?:[-_.\/]|$)", media_path)
+            )
+        if host == "homes.bg":
+            media_host = (urlsplit(normalized).hostname or "").lower()
+            return bool(
+                re.fullmatch(r"g\d+\.homes\.bg", media_host)
+                and anchored_path_prefix
+                and anchored_path_prefix in urlsplit(normalized).path.lower()
+            )
+        if host == "ues.bg":
+            parsed_media = urlsplit(normalized)
+            candidate = unquote(parsed_media.query)
+            if "url=" in candidate:
+                candidate = unquote(candidate.split("url=", 1)[1].split("&", 1)[0])
+            else:
+                candidate = normalized
+            return bool(
+                ues_image_prefix
+                and f"/offers/{ues_image_prefix}" in candidate.lower()
+            )
+        if host == "novitesgradi.bg":
+            parsed_media = urlsplit(normalized)
+            media_host = (parsed_media.hostname or "").lower().removeprefix("www.")
+            media_path = parsed_media.path.lower()
+            return (
+                media_host == "novitesgradi.bg"
+                and "/wp-content/uploads/" in media_path
+                and "/novite_" not in media_path
+                and "lazy_placeholder" not in media_path
+            )
+        if host == "imot.bg" and imot_listing_token:
+            # The page contains agency logos and photos from recommended offers.
+            # Its own gallery files carry the numeric id from the listing URL.
+            return (
+                "/photosimotbg/" in lowered
+                and imot_listing_token in lowered
+            )
+        if host in {"imoti.info", "holmes.bg", "bazar.bg"} and focus_listing_token:
+            return "/photosimotbg/" in lowered and focus_listing_token in lowered
+        if host == "address.bg" and address_listing_token:
+            return bool(
+                re.search(
+                    rf"/offers/\d+/{re.escape(address_listing_token)}/",
+                    urlsplit(normalized).path,
+                    re.I,
+                )
+            )
+        if host == "imoti.net" and imoti_net_listing_token:
+            return f"/obiavi/{imoti_net_listing_token}/" in lowered
+        if property_image_token:
+            return (
+                "property-images" in lowered
+                and property_image_token in urlsplit(normalized).path
+            )
+        if anchored_path_prefix:
+            return anchored_path_prefix in urlsplit(normalized).path.lower()
+        if host == "home2u.bg":
+            return (urlsplit(normalized).hostname or "").lower().endswith(
+                "skyholding.media"
+            )
+        media_path = urlsplit(normalized).path.lower()
+        if host == "mirela.bg" and numeric_listing_token:
+            return bool(
+                re.search(
+                    rf"/offers/php/\d+/{re.escape(numeric_listing_token)}/",
+                    media_path,
+                    re.I,
+                )
+            )
+        if host == "sales.bcpea.org" and numeric_listing_token:
+            return f"/upload/{numeric_listing_token}/" in media_path
+        if host == "domaza.bg" and numeric_listing_token:
+            return f"/{numeric_listing_token}/" in media_path
+        if host == "estates.ubb.bg" and numeric_listing_token:
+            return f"/attachments/listing/{numeric_listing_token}/" in media_path
+        if host == "imotno.bg" and imotno_token:
+            # Supabase gallery links on this site are short-lived signed URLs.
+            # The per-listing share image is stable and safe to persist.
+            return media_path.rstrip("/") == f"/property/{imotno_token}/share-image"
         return not any(part in lowered for part in deny)
 
+    def identity(value: str) -> str:
+        parsed = urlsplit(value)
+        path = parsed.path.lower()
+        if host == "olx.bg":
+            match = re.search(r"/v1/files/([^/]+)/image", path)
+            if match:
+                return f"olx:{match.group(1)}"
+        if host == "homes.bg":
+            match = re.search(r"/(\d+)[a-z]?\.(?:jpe?g|png|webp)$", path, re.I)
+            if match:
+                return f"homes:{match.group(1)}"
+        if host == "home2u.bg":
+            filename = path.rsplit("/", 1)[-1]
+            filename = re.sub(
+                r"-\d+x\d+(?=\.(?:jpe?g|png|webp)$)", "", filename, flags=re.I
+            )
+            return f"home2u:{filename}"
+        if host == "novitesgradi.bg":
+            filename = path.rsplit("/", 1)[-1]
+            filename = re.sub(
+                r"-\d+x\d+(?=\.(?:jpe?g|png|webp)(?:\.webp)?$)",
+                "",
+                filename,
+                flags=re.I,
+            )
+            filename = re.sub(
+                r"\.(jpe?g|png|webp)\.webp$", r".\1", filename, flags=re.I
+            )
+            return f"novitesgradi:{filename}"
+        if host == "imoti.net" and imoti_net_listing_token:
+            parent = path.rsplit("/", 2)[-2] if "/" in path else ""
+            filename = path.rsplit("/", 1)[-1]
+            filename = re.sub(
+                r"^thumb_\d+x\d+_(?:wm_)?", "", filename, flags=re.I
+            )
+            return f"imoti-net:{parent}:{filename}"
+        if host == "address.bg" and address_listing_token:
+            return f"address:{path.rsplit('/', 1)[-1].rsplit('.', 1)[0]}"
+        if host in {"imot.bg", "imoti.info", "holmes.bg", "bazar.bg"} and "/photosimotbg/" in path:
+            return f"focus:{path.rsplit('/', 1)[-1].rsplit('.', 1)[0]}"
+        if host == "yavlena.com":
+            decoded = unquote(parsed.query)
+            match = re.search(r"/([^/?]+\.(?:jpe?g|png|webp))", decoded, re.I)
+            if match:
+                return f"yavlena:{match.group(1).lower()}"
+        if property_image_token:
+            match = re.search(
+                rf"{re.escape(property_image_token)}_(\d+)\.(?:jpe?g|png|webp)$",
+                path,
+                re.I,
+            )
+            if match:
+                return f"property-template:{property_image_token}:{match.group(1)}"
+        if host == "revolution-estate.bg":
+            match = re.search(r"image_(\d+)\.(?:jpe?g|png|webp)$", path, re.I)
+            if match:
+                return f"revolution:{match.group(1)}"
+        if host == "ues.bg":
+            decoded = unquote(parsed.query)
+            match = re.search(r"(?:^|&)url=([^&]+)", decoded, re.I)
+            if match:
+                embedded = urlsplit(unquote(match.group(1)))
+                return f"ues:{embedded.path.lower()}"
+            if path.startswith("/offers/"):
+                return f"ues:{path}"
+        return value
+
     images: List[str] = []
+    identities: Set[str] = set()
     for value in extracted.get("images") or []:
-        if allowed(value) and value not in images:
-            images.append(value.strip())
+        if allowed(value):
+            normalized = value.strip()
+            key = identity(normalized)
+            if key not in identities:
+                identities.add(key)
+                images.append(normalized)
     cover = extracted.get("image")
     extracted["images"] = images
     extracted["image"] = cover.strip() if allowed(cover) else (images[0] if images else None)
@@ -238,7 +552,7 @@ def has_meaningful_detail(extracted: Dict[str, Any], min_desc_len: int) -> Tuple
     # A normal description is sufficient. Keep the threshold small; the purpose is
     # to reject empty/block/error pages, not poor-quality property advertisements.
     desc_threshold = max(20, min(int(min_desc_len or 0), 30))
-    if len(desc) >= desc_threshold:
+    if len(desc) >= desc_threshold and not _is_boilerplate_text(desc):
         return True, f"description:{len(desc)}"
 
     # Some sites expose the useful body as text blocks rather than description.
@@ -246,11 +560,12 @@ def has_meaningful_detail(extracted: Dict[str, Any], min_desc_len: int) -> Tuple
         block_text_len = 0
         for block in text_blocks:
             if isinstance(block, str):
-                block_text_len += len(block.strip())
+                if not _is_boilerplate_text(block):
+                    block_text_len += len(block.strip())
             elif isinstance(block, dict):
                 for key in ("text", "value", "content", "label"):
                     value = block.get(key)
-                    if isinstance(value, str):
+                    if isinstance(value, str) and not _is_boilerplate_text(value):
                         block_text_len += len(value.strip())
         if block_text_len >= 30:
             return True, f"raw_text_blocks:{block_text_len}"
@@ -278,10 +593,15 @@ def has_meaningful_detail(extracted: Dict[str, Any], min_desc_len: int) -> Tuple
 class DomainRule:
     domain: str
     concurrency: int
+    request_delay_ms: int
     min_desc_len: int
     wait_until: str
     timeout_ms: int
     extractor_script: str
+    description_selectors: List[str]
+    image_selectors: List[str]
+    inactive_selectors: List[str]
+    inactive_regex: List[re.Pattern]
     include_any: List[str]
     exclude_any: List[str]
     include_regex: List[re.Pattern]
@@ -341,6 +661,9 @@ def load_rules(path: str) -> Tuple[DomainRule, List[DomainRule]]:
         return DomainRule(
             domain=domain,
             concurrency=max(1, min(10, _safe_int(dct.get("concurrency"), 2))),
+            request_delay_ms=max(
+                0, min(60_000, _safe_int(dct.get("request_delay_ms"), 250))
+            ),
             min_desc_len=max(0, _safe_int(dct.get("min_desc_len"), 60)),
             wait_until=str(dct.get("wait_until") or "domcontentloaded"),
             timeout_ms=max(
@@ -349,6 +672,26 @@ def load_rules(path: str) -> Tuple[DomainRule, List[DomainRule]]:
             extractor_script=str(
                 dct.get("extractor_script") or "/app/scraper/detail_extractor.js"
             ),
+            description_selectors=[
+                str(value).strip()
+                for value in (dct.get("description_selectors") or [])
+                if isinstance(value, str) and value.strip()
+            ],
+            image_selectors=[
+                str(value).strip()
+                for value in (dct.get("image_selectors") or [])
+                if isinstance(value, str) and value.strip()
+            ],
+            inactive_selectors=[
+                str(value).strip()
+                for value in (dct.get("inactive_selectors") or [])
+                if isinstance(value, str) and value.strip()
+            ],
+            inactive_regex=[
+                re.compile(value, re.I)
+                for value in (dct.get("inactive_regex") or [])
+                if isinstance(value, str) and value.strip()
+            ],
             include_any=[str(x) for x in inc_any if isinstance(x, (str, int, float))],
             exclude_any=[str(x) for x in exc_any if isinstance(x, (str, int, float))],
             include_regex=inc_rx,
@@ -405,11 +748,15 @@ class ApiClient:
         domain: Optional[str],
         url_contains: Optional[str],
         limit: int,
+        offset: int = 0,
     ) -> List[str]:
         if self._client is None:
             raise RuntimeError("ApiClient not initialized")
 
-        params: Dict[str, Any] = {"limit": int(limit)}
+        params: Dict[str, Any] = {
+            "limit": int(limit),
+            "offset": max(0, int(offset)),
+        }
         if domain:
             params["domain"] = domain
         if url_contains:
@@ -468,6 +815,93 @@ class ApiClient:
             return [x for x in results if isinstance(x, dict)]
         return []
 
+    async def deactivate_listings(self, urls: List[str], reason: str) -> int:
+        if self._client is None:
+            raise RuntimeError("ApiClient not initialized")
+        if not urls:
+            return 0
+        response = await self._client.post(
+            f"{self.api_base}/api/v1/listings/deactivate",
+            headers=self._auth_headers(),
+            json={"urls": urls, "reason": reason[:200]},
+        )
+        response.raise_for_status()
+        data = response.json()
+        return int(data.get("deactivated") or 0)
+
+
+class DeadListingError(RuntimeError):
+    """A definitive listing-level absence, safe to deactivate in the catalogue."""
+
+
+class PublisherBlockedError(RuntimeError):
+    """Publisher-level throttling/challenge; never evidence of an inactive ad."""
+
+
+class IncompleteDetailError(RuntimeError):
+    """The page loaded, but extraction produced no listing-specific evidence."""
+
+
+class DomainCircuitBreaker:
+    """Stop a batch when repeated failures show a publisher-wide problem.
+
+    This is deliberately scoped to one ``run_once`` call. A later scheduled run
+    gets a clean probe, while the current run cannot hammer a blocked publisher.
+    """
+
+    def __init__(self, blocked_threshold: int = 2, incomplete_threshold: int = 5):
+        self.blocked_threshold = max(1, int(blocked_threshold))
+        self.incomplete_threshold = max(1, int(incomplete_threshold))
+        self._failures: Dict[str, Dict[str, int]] = {}
+        self._open: Dict[str, str] = {}
+        self._lock = asyncio.Lock()
+
+    async def reason(self, domain: str) -> Optional[str]:
+        async with self._lock:
+            return self._open.get(domain)
+
+    async def success(self, domain: str) -> None:
+        async with self._lock:
+            self._failures.pop(domain, None)
+
+    async def failure(self, domain: str, category: str, detail: str) -> bool:
+        async with self._lock:
+            counts = self._failures.setdefault(domain, {})
+            counts[category] = counts.get(category, 0) + 1
+            threshold = (
+                self.blocked_threshold
+                if category == "publisher_blocked"
+                else self.incomplete_threshold
+            )
+            if counts[category] >= threshold:
+                self._open[domain] = f"{category}: {detail}"
+                return True
+            return False
+
+    async def opened(self) -> Dict[str, str]:
+        async with self._lock:
+            return dict(self._open)
+
+
+class DomainPacer:
+    """Guarantee a minimum gap between navigation starts for each publisher."""
+
+    def __init__(self):
+        self._locks: Dict[str, asyncio.Lock] = {}
+        self._next_start: Dict[str, float] = {}
+
+    async def wait(self, domain: str, delay_ms: int) -> None:
+        delay_s = max(0, int(delay_ms)) / 1000.0
+        if delay_s <= 0:
+            return
+        lock = self._locks.setdefault(domain, asyncio.Lock())
+        async with lock:
+            loop = asyncio.get_running_loop()
+            remaining = self._next_start.get(domain, 0.0) - loop.time()
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+            self._next_start[domain] = loop.time() + delay_s
+
 
 class DetailExtractor:
     """Loads JS extractor scripts and executes them on pages."""
@@ -502,20 +936,39 @@ class DetailExtractor:
             timeout=10_000,
         )
 
-    async def extract_detail(self, page: Page, script_path: str) -> Dict[str, Any]:
+    async def extract_detail(
+        self,
+        page: Page,
+        script_path: str,
+        description_selectors: Optional[List[str]] = None,
+        image_selectors: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         """
         Executes the in-page extractor and returns the full extraction dict.
         The extractor should return at minimum: {ok, title, description, image, images}
         and may additionally return v2 raw harvest fields.
         """
         await self.ensure(page, script_path)
-        out = await page.evaluate("() => window.__listingDetailExtractor.extract()")
+        out = await page.evaluate(
+            "options => window.__listingDetailExtractor.extract(options)",
+            {
+                "descriptionSelectors": description_selectors or [],
+                "imageSelectors": image_selectors or [],
+            },
+        )
         if not isinstance(out, dict) or not out.get("ok"):
             raise RuntimeError("Detail extraction failed")
 
         # Basic normalization for core fields
         if isinstance(out.get("description"), str):
             out["description"] = out["description"].strip()
+            if _is_boilerplate_text(out["description"]):
+                out["description"] = ""
+                signals = out.get("signals")
+                if not isinstance(signals, dict):
+                    signals = {}
+                    out["signals"] = signals
+                signals["description_rejected"] = "boilerplate"
         if isinstance(out.get("title"), str):
             out["title"] = out["title"].strip()
         if isinstance(out.get("image"), str):
@@ -723,10 +1176,14 @@ async def scrape_one(
 
         final_url = page.url or url
         if canonical_domain(final_url) != canonical_domain(url):
-            raise RuntimeError(f"detail redirected across domains: {final_url}")
+            # External bot-manager/consent challenges are common and are not
+            # proof that the publisher removed the listing. Keep them retryable.
+            raise PublisherBlockedError(
+                f"detail redirected across domains: {final_url}"
+            )
         if not rule.allows_url(final_url):
-            raise RuntimeError(f"detail redirected off listing path: {final_url}")
-        rendered = (await page.content()).encode("utf-8", "replace")[:131072]
+            raise DeadListingError(f"detail redirected off listing path: {final_url}")
+        rendered = await _stable_page_content(page)
         health = classify_response(
             original_url=url,
             final_url=final_url,
@@ -735,13 +1192,38 @@ async def scrape_one(
             content_type=(await response.all_headers()).get("content-type", ""),
             body_expected=True,
         )
+        if health.state == "dead":
+            raise DeadListingError(
+                f"detail page is dead: {health.reason} status={health.status_code}"
+            )
         if not health.valid:
-            raise RuntimeError(
+            message = (
                 f"detail page is {health.state}: {health.reason} "
                 f"status={health.status_code}"
             )
+            if health.status_code in {403, 429, 520} or health.reason == "block_page":
+                raise PublisherBlockedError(message)
+            raise RuntimeError(message)
 
-        extracted = await extractor.extract_detail(page, rule.extractor_script)
+        if rule.inactive_selectors and rule.inactive_regex:
+            for selector in rule.inactive_selectors:
+                try:
+                    values = await page.locator(selector).all_inner_texts()
+                except Exception:
+                    continue
+                marker_text = " ".join(value.strip() for value in values if value.strip())
+                if any(pattern.search(marker_text) for pattern in rule.inactive_regex):
+                    raise DeadListingError(
+                        f"listing has publisher inactive marker in {selector}: "
+                        f"{marker_text[:160]}"
+                    )
+
+        extracted = await extractor.extract_detail(
+            page,
+            rule.extractor_script,
+            rule.description_selectors,
+            rule.image_selectors,
+        )
         extracted = clean_extracted_media(url, extracted)
         title = extracted.get("title")
         desc = extracted.get("description")
@@ -756,7 +1238,7 @@ async def scrape_one(
         meaningful, reason = has_meaningful_detail(extracted, rule.min_desc_len)
         if not meaningful:
             print(f"⏭️ incomplete detail: {url} -> {reason}")
-            return None
+            raise IncompleteDetailError(reason)
 
         print(f"🧾 meaningful detail: {url} -> {reason}")
         return make_detail_payload(url, extracted)
@@ -778,33 +1260,36 @@ async def post_payloads(
 
     for i in range(0, len(payloads), batch_size):
         chunk = payloads[i : i + batch_size]
+        confirmed: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
         try:
             results = (
                 await api.post_extractions_batch(chunk)
                 if batch_size > 1
                 else [await api.post_extraction(chunk[0])]
             )
+            confirmed = list(zip(chunk, results))
         except Exception as e:
             # Fallback: try individual posts so one bad payload doesn't nuke the whole batch.
             print(f"⚠️ batch post failed ({len(chunk)} items): {e} -> trying individual")
-            results = []
             for p in chunk:
                 try:
-                    results.append(await api.post_extraction(p))
+                    confirmed.append((p, await api.post_extraction(p)))
                 except Exception as e2:
                     print(f"❌ post failed: {p.get('sourceUrl')} -> {e2}")
 
-        # --- ADDED: per-post confirmation (true end-to-end signal) ---
-        for r in results:
+        for payload, r in confirmed:
             rid = r.get("id") if isinstance(r, dict) else None
             if isinstance(rid, int):
                 ids.append(rid)
-                src = r.get("sourceUrl") if isinstance(r, dict) else None
+                # A detail write updates canonical listing state without adding
+                # another historical index run, so the API receipt id may point
+                # to that row's original index run. Log the submitted listing,
+                # which is the object actually updated.
+                src = payload.get("sourceUrl")
                 if isinstance(src, str) and src:
                     print(f"📌 posted: id={rid} url={src}")
                 else:
                     print(f"📌 posted: id={rid}")
-        # ------------------------------------------------------------
 
     return ids
 
@@ -821,14 +1306,20 @@ async def run_once(
     post_batch_size: int,
     retry_attempts: int,
     retry_delay_s: float,
-) -> Tuple[int, int, Optional[int]]:
-    """Returns (urls_seen, urls_scraped, last_id)."""
+    queue_offset: int = 0,
+    circuit: Optional[DomainCircuitBreaker] = None,
+    pacer: Optional[DomainPacer] = None,
+) -> Tuple[int, int, int, Optional[int]]:
+    """Returns (urls_seen, urls_scraped, urls_deactivated, last_id)."""
 
     default_rule, domain_rules = load_rules(rules_file)
 
     async with ApiClient(api_base, api_key) as api:
         urls = await api.get_detail_queue(
-            domain=queue_domain, url_contains=queue_url_contains, limit=queue_limit
+            domain=queue_domain,
+            url_contains=queue_url_contains,
+            limit=min(queue_limit, max_urls),
+            offset=queue_offset,
         )
 
         # dedupe + cap
@@ -849,7 +1340,7 @@ async def run_once(
                 break
 
         if not final:
-            return (len(urls), 0, None)
+            return (len(urls), 0, 0, None)
 
         global_concurrency = max(1, min(20, int(global_concurrency)))
 
@@ -870,21 +1361,34 @@ async def run_once(
                     domain_sems[key] = asyncio.Semaphore(rule.concurrency)
 
             global_sem = asyncio.Semaphore(global_concurrency)
+            dead_urls: List[str] = []
+            # Drain mode passes process-lifetime instances so a domain blocked
+            # in one queue page cannot be probed again in the next page.
+            circuit = circuit or DomainCircuitBreaker()
+            pacer = pacer or DomainPacer()
 
             async def worker(u: str, rule: DomainRule) -> Optional[Dict[str, Any]]:
                 async with global_sem:
                     async with domain_sems[rule.domain]:
+                        open_reason = await circuit.reason(rule.domain)
+                        if open_reason:
+                            # The batch summary reports the open circuit once.
+                            # Per-URL messages would generate millions of noisy
+                            # lines while a large publisher is being skipped.
+                            return None
                         attempts = max(1, min(5, int(retry_attempts)))
                         last_error: Optional[str] = None
 
                         for attempt in range(1, attempts + 1):
                             try:
+                                await pacer.wait(rule.domain, rule.request_delay_ms)
                                 if _document_extension(u):
                                     extracted = await extract_document_detail(u, rule)
                                     payload = make_detail_payload(u, extracted)
                                 else:
                                     payload = await scrape_one(pool, extractor, rule, u)
                                 if isinstance(payload, dict):
+                                    await circuit.success(rule.domain)
                                     items = payload.get("items") or []
                                     raw = ""
                                     if items and isinstance(items[0], dict):
@@ -894,6 +1398,26 @@ async def run_once(
                                     return payload
 
                                 last_error = "no meaningful detail content"
+                            except DeadListingError as e:
+                                await circuit.success(rule.domain)
+                                dead_urls.append(u)
+                                print(f"🗑️ confirmed inactive: {u} -> {e}")
+                                return None
+                            except PublisherBlockedError as e:
+                                last_error = str(e)
+                                opened = await circuit.failure(
+                                    rule.domain, "publisher_blocked", last_error
+                                )
+                                print(
+                                    f"🛡️ publisher response deferred without retry: "
+                                    f"{u} -> {last_error}"
+                                )
+                                if opened:
+                                    print(
+                                        f"⏸️ opened domain circuit for {rule.domain}: "
+                                        f"{last_error}"
+                                    )
+                                return None
                             except Exception as e:
                                 last_error = str(e)
 
@@ -905,20 +1429,42 @@ async def run_once(
                                 )
                                 await asyncio.sleep(delay)
 
+                        category = (
+                            "incomplete_detail"
+                            if isinstance(last_error, str)
+                            and last_error.startswith("insufficient_content:")
+                            else "runtime_failure"
+                        )
+                        opened = await circuit.failure(
+                            rule.domain, category, last_error or "unknown error"
+                        )
                         print(f"❌ detail failed after {attempts} attempts: {u} -> {last_error}")
+                        if opened:
+                            print(
+                                f"⏸️ opened domain circuit for {rule.domain}: "
+                                f"{category}: {last_error}"
+                            )
                         return None
 
             payloads = await asyncio.gather(
                 *[asyncio.create_task(worker(u, rule)) for (u, rule) in final]
             )
+            opened_circuits = await circuit.opened()
+            for domain, reason in sorted(opened_circuits.items()):
+                print(f"🛡️ domain deferred for next run: {domain} -> {reason}")
             await pool.close()
             await browser.close()
 
         good_payloads = [p for p in payloads if isinstance(p, dict)]
         ids = await post_payloads(api, good_payloads, post_batch_size)
+        deactivated = await api.deactivate_listings(
+            list(dict.fromkeys(dead_urls)), "detail_confirmed_dead"
+        )
+        if deactivated:
+            print(f"🗑️ deactivated confirmed-dead listings: {deactivated}")
 
     last_id = ids[-1] if ids else None
-    return (len(urls), len(ids), last_id)
+    return (len(urls), len(ids), deactivated, last_id)
 
 
 async def main_async(argv: List[str]) -> int:
@@ -993,6 +1539,16 @@ async def main_async(argv: List[str]) -> int:
         help="Sleep between drained batches",
     )
 
+    parser.add_argument(
+        "--balanced-per-domain",
+        type=int,
+        default=int(os.getenv("DETAIL_BALANCED_PER_DOMAIN", "0")),
+        help=(
+            "Audit up to this many pending rows independently for every configured "
+            "domain. Zero disables balanced mode."
+        ),
+    )
+
     args = parser.parse_args(argv)
 
     queue_limit = max(1, min(500, int(args.queue_limit)))
@@ -1000,19 +1556,77 @@ async def main_async(argv: List[str]) -> int:
 
     total_seen = 0
     total_done = 0
+    total_deactivated = 0
     last_id: Optional[int] = None
+    queue_offset = 0
 
     print(
         f"DETAIL CONCURRENCY: {max(1, min(20, int(args.global_concurrency)))} | "
         f"retry_attempts={max(1, min(5, int(args.retry_attempts)))}"
     )
 
+    balanced_limit = max(0, min(500, int(args.balanced_per_domain)))
+    if balanced_limit:
+        _default_rule, configured_rules = load_rules(args.rules)
+        domains = (
+            [args.queue_domain]
+            if args.queue_domain
+            else list(dict.fromkeys(rule.domain for rule in configured_rules))
+        )
+        results: List[Tuple[str, int, int, int]] = []
+        for domain in domains:
+            print(f"\n🔬 balanced domain audit: {domain} (limit={balanced_limit})")
+            seen, done, deactivated, lid = await run_once(
+                api_base=args.api_base,
+                api_key=args.api_key,
+                queue_domain=domain,
+                queue_url_contains=args.queue_url_contains,
+                queue_limit=balanced_limit,
+                max_urls=balanced_limit,
+                rules_file=args.rules,
+                global_concurrency=args.global_concurrency,
+                post_batch_size=args.post_batch_size,
+                retry_attempts=args.retry_attempts,
+                retry_delay_s=args.retry_delay_s,
+                queue_offset=0,
+            )
+            results.append((domain, seen, done, deactivated))
+            total_seen += seen
+            total_done += done
+            total_deactivated += deactivated
+            last_id = lid or last_id
+            print(
+                f"AUDIT_RESULT domain={domain} sampled={seen} "
+                f"posted={done} deactivated={deactivated} "
+                f"deferred={max(0, seen - done - deactivated)}"
+            )
+
+        print("\nBALANCED_AUDIT_SUMMARY")
+        for domain, seen, done, deactivated in results:
+            print(
+                f"{domain}\tsampled={seen}\tposted={done}\t"
+                f"deactivated={deactivated}\t"
+                f"deferred={max(0, seen - done - deactivated)}"
+            )
+        print(
+            f"✅ detail total: posted={total_done}, "
+            f"deactivated={total_deactivated}, sampled={total_seen}"
+        )
+        if last_id is not None:
+            print(f"last_extraction_id={last_id}")
+        return 0 if (total_done + total_deactivated) > 0 else 2
+
+    drain_circuit = DomainCircuitBreaker()
+    drain_pacer = DomainPacer()
+
     while True:
         print(
-            f"▶️ queue request: domain={args.queue_domain!r}, contains={args.queue_url_contains!r}, limit={queue_limit}"
+            f"▶️ queue request: domain={args.queue_domain!r}, "
+            f"contains={args.queue_url_contains!r}, limit={min(queue_limit, max_urls)}, "
+            f"offset={queue_offset}"
         )
 
-        seen, done, lid = await run_once(
+        seen, done, deactivated, lid = await run_once(
             api_base=args.api_base,
             api_key=args.api_key,
             queue_domain=args.queue_domain,
@@ -1024,13 +1638,20 @@ async def main_async(argv: List[str]) -> int:
             post_batch_size=args.post_batch_size,
             retry_attempts=args.retry_attempts,
             retry_delay_s=args.retry_delay_s,
+            queue_offset=queue_offset,
+            circuit=drain_circuit,
+            pacer=drain_pacer,
         )
 
         total_seen += seen
         total_done += done
+        total_deactivated += deactivated
         last_id = lid or last_id
 
-        print(f"✅ batch done: scraped={done}, queue_returned={seen}")
+        print(
+            f"✅ batch done: scraped={done}, deactivated={deactivated}, "
+            f"queue_returned={seen}"
+        )
 
         if not args.drain:
             break
@@ -1039,15 +1660,26 @@ async def main_async(argv: List[str]) -> int:
         if seen == 0:
             break
 
-        # If queue returned URLs but none were posted, you might have too-strict rules.
-        # We still continue draining to allow other domains to proceed in the next fetch.
+        # Successful rows leave the pending queue. Failed/rule-rejected rows do
+        # not, so advance past exactly those rows for the remainder of this run.
+        # The next scheduled process starts at zero and retries them.
+        handled = done + deactivated
+        failed_this_batch = max(0, seen - handled)
+        queue_offset = _next_queue_offset(queue_offset, seen, handled)
+        print(
+            f"➡️ drain progress: posted={done}, deferred={failed_this_batch}, "
+            f"next_offset={queue_offset}"
+        )
         await asyncio.sleep(max(0.0, float(args.batch_sleep_s)))
 
-    print(f"✅ detail total: posted={total_done}")
+    print(
+        f"✅ detail total: posted={total_done}, "
+        f"deactivated={total_deactivated}"
+    )
     if last_id is not None:
         print(f"last_extraction_id={last_id}")
 
-    return 0 if total_done > 0 else 2
+    return 0 if (total_done + total_deactivated) > 0 else 2
 
 
 def main() -> None:

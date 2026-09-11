@@ -19,9 +19,14 @@ from scraper.runner import (
 )
 from scraper.listing_health import HealthVerdict, ListingHealthValidator, classify_response
 from scraper.detail_runner import (
+    DomainCircuitBreaker,
     _docx_text,
     _document_extension,
+    _is_boilerplate_text,
+    _next_queue_offset,
     clean_extracted_media,
+    has_meaningful_detail,
+    load_rules,
     make_detail_payload,
 )
 
@@ -158,6 +163,41 @@ class ListingHealthTests(unittest.TestCase):
         )
         self.assertEqual(verdict.state, "valid")
 
+
+class DetailRunnerSafetyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_publisher_block_opens_domain_circuit_at_threshold(self):
+        circuit = DomainCircuitBreaker(blocked_threshold=2, incomplete_threshold=5)
+        self.assertFalse(
+            await circuit.failure("olx.bg", "publisher_blocked", "http_403")
+        )
+        self.assertTrue(
+            await circuit.failure("olx.bg", "publisher_blocked", "http_403")
+        )
+        self.assertIn("http_403", await circuit.reason("olx.bg"))
+        self.assertIsNone(await circuit.reason("homes.bg"))
+
+    async def test_success_resets_failure_streak(self):
+        circuit = DomainCircuitBreaker(blocked_threshold=2)
+        await circuit.failure("example.bg", "publisher_blocked", "http_429")
+        await circuit.success("example.bg")
+        self.assertFalse(
+            await circuit.failure("example.bg", "publisher_blocked", "http_429")
+        )
+        self.assertIsNone(await circuit.reason("example.bg"))
+
+    async def test_domain_rule_loads_bounded_request_delay(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "rules.yml"
+            path.write_text(
+                "defaults:\n  request_delay_ms: 250\n"
+                "domains:\n- domain: slow.bg\n  request_delay_ms: 2500\n"
+                "- domain: bounded.bg\n  request_delay_ms: 999999\n",
+                encoding="utf-8",
+            )
+            default, rules = load_rules(str(path))
+        self.assertEqual(default.request_delay_ms, 250)
+        self.assertEqual(rules[0].request_delay_ms, 2500)
+        self.assertEqual(rules[1].request_delay_ms, 60_000)
 
 class ListingHealthConcurrencyTests(unittest.IsolatedAsyncioTestCase):
     async def test_one_domain_cannot_starve_another_of_global_slots(self):
@@ -623,7 +663,7 @@ class PaginationTests(unittest.TestCase):
             self.assertIn("example.com", script)
 
 
-class DomainFallbackExtractionTests(unittest.IsolatedAsyncioTestCase):
+class DomazaFallbackExtractionTests(unittest.IsolatedAsyncioTestCase):
     async def test_domaza_property_anchors_are_merged_into_an_empty_result(self):
         extractor = PlaywrightExtractor("extension/content.js")
 
@@ -653,7 +693,7 @@ class DomainFallbackExtractionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("8356211", result["items"][0]["url"])
 
 
-class DomainFallbackExtractionTests(unittest.IsolatedAsyncioTestCase):
+class DomazaFallbackMergeTests(unittest.IsolatedAsyncioTestCase):
     async def test_domaza_property_anchors_are_merged_when_generic_result_is_empty(self):
         extractor = PlaywrightExtractor("extension/content.js")
 
@@ -681,6 +721,24 @@ class DomainFallbackExtractionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class DetailPayloadTests(unittest.TestCase):
+    def test_detail_drain_offset_defers_only_failed_rows(self):
+        self.assertEqual(_next_queue_offset(7, seen=20, posted=16), 11)
+        self.assertEqual(_next_queue_offset(11, seen=20, posted=20), 11)
+
+    def test_cookie_consent_is_not_meaningful_detail(self):
+        consent = (
+            "Ние и нашите партньори използваме бисквитки и подобни технологии "
+            "за обработване на лични данни. Настройки на бисквитките."
+        )
+        self.assertTrue(_is_boilerplate_text(consent))
+        self.assertEqual(
+            has_meaningful_detail(
+                {"description": consent, "raw_text_blocks": [{"text": consent}]},
+                60,
+            )[0],
+            False,
+        )
+
     def test_known_publisher_chrome_is_removed_from_canonical_media(self):
         cleaned = clean_extracted_media(
             "https://estates.ubb.bg/sales/1",
@@ -698,6 +756,296 @@ class DetailPayloadTests(unittest.TestCase):
             "https://estates.ubb.bg/attachments/Listing/1/main/home.jpg",
         )
         self.assertEqual(cleaned["images"], [cleaned["image"]])
+
+    def test_imot_media_keeps_only_current_listing_gallery(self):
+        own = "https://cdn.focus.bg/imot/photosimotbg/1/595/big/1b175023352321595_a.jpg"
+        cleaned = clean_extracted_media(
+            "https://www.imot.bg/obiava-1b175023352321595-prodava-apartament",
+            {
+                "image": own,
+                "images": [
+                    own,
+                    "https://www.imot.bg/images/logos/big/agency.pic",
+                    "https://cdn.focus.bg/imot/photosimotbg/1/999/1k178463761589836_b.jpg",
+                ],
+            },
+        )
+        self.assertEqual(cleaned["image"], own)
+        self.assertEqual(cleaned["images"], [own])
+
+    def test_focus_gallery_anchors_to_first_listing_photo(self):
+        own = "https://cdn.focus.bg/imot/photosimotbg/1/020/big/1a173764051952020_A.jpg"
+        duplicate_size = "https://cdn.focus.bg/imot/photosimotbg/1/020/med/1a173764051952020_A.jpg"
+        related = "https://cdn.focus.bg/imot/photosimotbg/1/999/1a178557742959772_B.jpg"
+        cleaned = clean_extracted_media(
+            "https://www.holmes.bg/obiava/99839073/property",
+            {"image": own, "images": [own, duplicate_size, related]},
+        )
+        self.assertEqual(cleaned["images"], [own])
+
+    def test_address_media_excludes_related_offers_and_size_duplicates(self):
+        cover = "https://address.bg/storage/uploads/offers/419/681419/764x510/1.jpg"
+        cleaned = clean_extracted_media(
+            "https://address.bg/sofia-office-offer681419",
+            {
+                "image": cover,
+                "images": [
+                    cover,
+                    "https://address.bg/storage/uploads/offers/419/681419/370x200/1.webp",
+                    "https://address.bg/storage/uploads/offers/419/681419/370x200/2.jpg",
+                    "https://address.bg/storage/uploads/offers/421/681421/370x200/1.jpg",
+                    "https://maps.googleapis.com/map.png",
+                ],
+            },
+        )
+        self.assertEqual(cleaned["image"], cover)
+        self.assertEqual(
+            cleaned["images"],
+            [cover, "https://address.bg/storage/uploads/offers/419/681419/370x200/2.jpg"],
+        )
+
+    def test_olx_media_deduplicates_responsive_variants(self):
+        large = "https://cdn.olx.com/v1/files/photo-one/image;s=1200x0"
+        cleaned = clean_extracted_media(
+            "https://www.olx.bg/d/ad/property-ID1.html",
+            {
+                "image": large,
+                "images": [
+                    large,
+                    "https://cdn.olx.com/v1/files/photo-one/image;s=640x480",
+                    "https://img-resizer.prd.01.eu-west-1.eu.olx.org/related.jpg",
+                ],
+            },
+        )
+        self.assertEqual(cleaned["images"], [large])
+
+    def test_arcoreal_media_excludes_site_chrome(self):
+        own = "https://arcoreal.bg/image?id=604102&w=255&h=254&crop=1"
+        cleaned = clean_extracted_media(
+            "https://arcoreal.bg/offers/example-91418",
+            {
+                "image": "https://www.arcoreal.bg/img/logo-bg.png",
+                "images": [
+                    "https://www.arcoreal.bg/img/logo-bg.png",
+                    "https://arcoreal.bg/image-main?id=2&type=logo-head-bg",
+                    own,
+                ],
+            },
+        )
+        self.assertEqual(cleaned["image"], own)
+        self.assertEqual(cleaned["images"], [own])
+
+    def test_buildingbox_media_excludes_logo_and_chat_assets(self):
+        own = "https://buildingbox.bg/wp-content/uploads/2026/08/property.jpg"
+        cleaned = clean_extracted_media(
+            "https://buildingbox.bg/properties/example/",
+            {
+                "image": own,
+                "images": [
+                    own,
+                    "https://buildingbox.bg/wp-content/uploads/2025/03/logo.png",
+                    "https://salesiq-eu.nimbuspop.com/brands/sticker.png",
+                ],
+            },
+        )
+        self.assertEqual(cleaned["image"], own)
+        self.assertEqual(cleaned["images"], [own])
+
+    def test_homes_media_stays_in_current_listing_upload_directory(self):
+        cover = "https://g1.homes.bg/2021-02-14_2/60190955o.jpg"
+        own_second = "https://g1.homes.bg/2021-02-14_2/60190956s.jpg"
+        cleaned = clean_extracted_media(
+            "https://www.homes.bg/offer/apartament-za-prodazhba/example/as1",
+            {
+                "image": cover,
+                "images": [
+                    cover,
+                    "https://g1.homes.bg/2021-02-14_2/60190955s.jpg",
+                    own_second,
+                    "https://g1.homes.bg/2026-09-11_1/99999999o.jpg",
+                    "https://www.homes.bg/images/users_logos/4391.png",
+                ],
+            },
+        )
+        self.assertEqual(cleaned["image"], cover)
+        self.assertEqual(cleaned["images"], [cover, own_second])
+
+    def test_home2u_media_deduplicates_wordpress_sizes(self):
+        full = "https://home2u.skyholding.media/2026/09/house-main-1.jpg"
+        cleaned = clean_extracted_media(
+            "https://home2u.bg/property/example/",
+            {
+                "image": full,
+                "images": [
+                    full,
+                    "https://home2u.skyholding.media/2026/09/house-main-1-1536x864.jpg",
+                ],
+            },
+        )
+        self.assertEqual(cleaned["images"], [full])
+
+    def test_imoti_net_media_deduplicates_thumbnail_sizes(self):
+        cover = (
+            "https://www.imoti.net/web/files/obiavi/6302516/main_image/"
+            "thumb_1200x630_wm_main_image_6302516_1.jpg?ver=1"
+        )
+        gallery = (
+            "https://www.imoti.net/web/files/obiavi/6302516/images/"
+            "thumb_1200x630_wm_images_6302516_2.jpg?ver=1"
+        )
+        cleaned = clean_extracted_media(
+            "https://www.imoti.net/bg/obiava/6302516",
+            {
+                "image": cover,
+                "images": [
+                    cover,
+                    cover.replace("1200x630", "880x0"),
+                    cover.replace("thumb_1200x630_wm_", "thumb_160x90_"),
+                    gallery,
+                    gallery.replace("1200x630", "880x0"),
+                ],
+            },
+        )
+        self.assertEqual(cleaned["images"], [cover, gallery])
+
+    def test_novite_sgradi_media_excludes_logo_maps_and_related_chrome(self):
+        own = "https://novitesgradi.bg/wp-content/uploads/2020/06/192.1.jpg"
+        cleaned = clean_extracted_media(
+            "https://novitesgradi.bg/sgrada/example/",
+            {
+                "image": own,
+                "images": [
+                    own,
+                    "https://novitesgradi.bg/wp-content/uploads/2020/06/192.1-1240x720.jpg.webp",
+                    "https://novitesgradi.bg/wp-content/uploads/2020/06/Novite_180x60.png.webp",
+                    "https://a.basemaps.cartocdn.com/light_all/17/1/2.png",
+                    "https://novitesgradi.bg/wp-content/plugins/a3-lazy-load/assets/images/lazy_placeholder.gif",
+                ],
+            },
+        )
+        self.assertEqual(cleaned["image"], own)
+        self.assertEqual(cleaned["images"], [own])
+
+    def test_shared_property_template_media_uses_listing_reference(self):
+        own = "https://static.superimoti.bg/property-images/big/123T142119_1.jpg"
+        cleaned = clean_extracted_media(
+            "https://www.suprimmo.bg/imot-142119-property/",
+            {
+                "image": own,
+                "images": [
+                    own,
+                    "https://static.superimoti.bg/property-images/medium/123T142119_1.jpg",
+                    "https://www.suprimmo.bg/img/logo-bg.png",
+                ],
+            },
+        )
+        self.assertEqual(cleaned["images"], [own])
+
+    def test_revolution_media_anchors_to_cover_estate(self):
+        own = "https://revolution-estate.bg/images/estate/69605/image_0.jpg"
+        cleaned = clean_extracted_media(
+            "https://revolution-estate.bg/imot/property-1",
+            {
+                "image": own,
+                "images": [
+                    own,
+                    "https://revolution-estate.bg/images/estate/69605/medium_image_0.jpg",
+                    "https://revolution-estate.bg/images/logo.png",
+                    "https://revolution-estate.bg/images/estate/70000/image_0.jpg",
+                ],
+            },
+        )
+        self.assertEqual(cleaned["images"], [own])
+
+    def test_ues_media_deduplicates_next_image_variants(self):
+        proxied = (
+            "https://ues.bg/_next/image?url=https%3A%2F%2Fcdn.example%2Foffers%2F"
+            "offer_3_28076_1920_one.webp"
+            "&w=1920&q=85"
+        )
+        cleaned = clean_extracted_media(
+            "https://ues.bg/bg/imot/example-123",
+            {
+                "image": proxied,
+                "images": [
+                    proxied,
+                    "https://cdn.example/offers/offer_3_28076_1920_one.webp",
+                    "https://ues.bg/_next/image?url=https%3A%2F%2Fcdn.example%2Foffers%2Foffer_3_28076_1920_two.webp&w=640&q=85",
+                    "https://cdn.example/offers/offer_3_99999_1920_related.webp",
+                    "https://ues.bg/img/ues-og-image.webp",
+                ],
+            },
+        )
+        self.assertEqual(len(cleaned["images"]), 2)
+
+    def test_mirela_media_keeps_only_current_offer_gallery(self):
+        own = "https://www.mirela.bg/dynamic/i/offers/php/761/462761/3_2.jpg?v=1"
+        cleaned = clean_extracted_media(
+            "https://www.mirela.bg/naemi/property-462761",
+            {
+                "image": own,
+                "images": [
+                    own,
+                    "https://www.mirela.bg/dynamic/i/brokers/php/45/1045/1_2.jpg",
+                    "https://tile.openstreetmap.org/17/1/1.png",
+                ],
+            },
+        )
+        self.assertEqual(cleaned["images"], [own])
+
+    def test_auction_media_keeps_only_current_property_uploads(self):
+        own = "https://sales.bcpea.org/upload/91143/455118/photo.png"
+        cleaned = clean_extracted_media(
+            "https://sales.bcpea.org/properties/91143",
+            {
+                "image": own,
+                "images": [
+                    own,
+                    "https://sales.bcpea.org/assets/images/photo-placeholder.png",
+                    "https://sales.bcpea.org/upload/90476/other.png",
+                ],
+            },
+        )
+        self.assertEqual(cleaned["images"], [own])
+
+    def test_domaza_media_keeps_only_current_listing_directory(self):
+        own = "https://static.domaza.bg/images/8614408/property.jpg"
+        cleaned = clean_extracted_media(
+            "https://www.domaza.bg/property-sofia-16-8614408-p/",
+            {
+                "image": own,
+                "images": [own, "https://static.domaza.bg/images/8613842/related.jpg"],
+            },
+        )
+        self.assertEqual(cleaned["images"], [own])
+
+    def test_imotno_discards_expiring_signed_gallery_urls(self):
+        stable = "https://imotno.bg/property/9b136a0d-4174-444a-8a12-3da52153dfa6/share-image"
+        cleaned = clean_extracted_media(
+            "https://imotno.bg/property/9b136a0d-4174-444a-8a12-3da52153dfa6",
+            {
+                "image": stable,
+                "images": [
+                    stable,
+                    "https://storage.example/object.jpg?X-Amz-Expires=900&X-Amz-Signature=x",
+                ],
+            },
+        )
+        self.assertEqual(cleaned["images"], [stable])
+
+    def test_ubb_media_keeps_only_current_listing_attachments(self):
+        own = "https://estates.ubb.bg/attachments/Listing/2257/main/home.jpg"
+        cleaned = clean_extracted_media(
+            "https://estates.ubb.bg/sales/2257",
+            {
+                "image": own,
+                "images": [
+                    own,
+                    "https://estates.ubb.bg/attachments/Listing/2200/main/related.jpg",
+                ],
+            },
+        )
+        self.assertEqual(cleaned["images"], [own])
 
     def test_document_extension_ignores_query_strings(self):
         self.assertEqual(

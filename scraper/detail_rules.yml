@@ -1,5 +1,8 @@
 defaults:
   concurrency: 2
+  # Minimum gap between navigation starts for one publisher. This preserves
+  # concurrency across domains without creating same-domain request bursts.
+  request_delay_ms: 250
   min_desc_len: 60
   wait_until: domcontentloaded
   timeout_ms: 45000
@@ -27,7 +30,8 @@ domains:
   exclude_any:
   - /obiavi/
 - domain: address.bg
-  concurrency: 2
+  concurrency: 1
+  request_delay_ms: 6500
   min_desc_len: 60
   include_any:
   include_regex: []
@@ -38,6 +42,10 @@ domains:
   include_any:
   include_regex: []
   exclude_any: []
+  description_selectors:
+  - .tab.tab-description.active
+  image_selectors:
+  - .gallery
 - domain: bazar.bg
   concurrency: 2
   min_desc_len: 60
@@ -46,12 +54,18 @@ domains:
   include_regex: []
   exclude_any:
   - /obiavi/
+  description_selectors:
+  - .clearfix.text.show-more-height
 - domain: buildingbox.bg
   concurrency: 2
   min_desc_len: 60
   include_any:
   include_regex: []
   exclude_any: []
+  description_selectors:
+  - '#property-houzez-the-content'
+  image_selectors:
+  - '[id^="property-gallery-js-"]'
 - domain: bulgarianproperties.com
   concurrency: 2
   min_desc_len: 40
@@ -59,12 +73,16 @@ domains:
   include_regex: []
   exclude_any:
   - /sale_properties/
+  description_selectors:
+  - .component-single-property-general-information .text
 - domain: domaza.bg
   concurrency: 2
   min_desc_len: 60
   include_any:
   include_regex: []
   exclude_any: []
+  description_selectors:
+  - .pre-like
 - domain: en.realestates.bg
   concurrency: 2
   min_desc_len: 60
@@ -72,7 +90,8 @@ domains:
   include_regex: []
   exclude_any: []
 - domain: dskhome.bg
-  concurrency: 2
+  concurrency: 1
+  request_delay_ms: 2500
   min_desc_len: 40
   include_any:
   - /listings/
@@ -110,6 +129,8 @@ domains:
   - /project/
   include_regex: []
   exclude_any: []
+  image_selectors:
+  - '.section-building-gallery'
 - domain: imot.bg
   concurrency: 2
   min_desc_len: 40
@@ -126,6 +147,7 @@ domains:
   exclude_any: []
 - domain: imoti.com
   concurrency: 1
+  request_delay_ms: 2500
   min_desc_len: 60
   include_any:
   - /obiava
@@ -156,13 +178,20 @@ domains:
   - /bulgaria
   include_regex: []
   exclude_any: []
+  description_selectors:
+  - '#panel1a.tabs-panel.is-active'
 - domain: mirela.bg
-  concurrency: 2
+  concurrency: 1
+  request_delay_ms: 6500
   min_desc_len: 60
   include_any:
  
   include_regex: []
   exclude_any: []
+  description_selectors:
+  - .js-offer-description
+  image_selectors:
+  - .single-property-gallery
 - domain: property.bg
   concurrency: 2
   min_desc_len: 60
@@ -171,6 +200,8 @@ domains:
   - /property
   include_regex: []
   exclude_any: []
+  description_selectors:
+  - '#panel1a.tabs-panel.is-active'
 - domain: revolution-estate.bg
   concurrency: 2
   min_desc_len: 40
@@ -180,7 +211,11 @@ domains:
   exclude_any:
   - /imoti-za-prodazhda
 - domain: olx.bg
-  concurrency: 2
+  concurrency: 1
+  # Live audit showed a publisher block after ~30 starts at 2.5 s spacing.
+  # Stay below ten detail navigations/minute and let the circuit defer if the
+  # publisher tightens that limit further.
+  request_delay_ms: 6500
   min_desc_len: 40
   include_any:
   - /d/ad/
@@ -203,14 +238,19 @@ domains:
   - /imot
   include_regex: []
   exclude_any: []
+  description_selectors:
+  - '#panel1a.tabs-panel.is-active'
 - domain: ues.bg
   concurrency: 2
   min_desc_len: 60
   include_any:
-  - /bgr/
-  - /bgr
+  - /bg/imot/
   include_regex: []
   exclude_any: []
+  description_selectors:
+  - '#offer-description .long-text'
+  image_selectors:
+  - '#project-gallery'
 - domain: yavlena.com
   concurrency: 2
   min_desc_len: 60
@@ -224,6 +264,17 @@ domains:
   - /sgrada/
   include_regex: []
   exclude_any: []
+  description_selectors:
+  - .rh_content
+  image_selectors:
+  - .property-detail-slider-three
+  - '#property-featured-image'
+  - 'a[data-fancybox="gallery"]'
+  inactive_selectors:
+  - .novite-sold-ribbon
+  - '.novite-ss-sold'
+  inactive_regex:
+  - '(?:продадена|неактуална|изпуснахте тази сграда)'
 - domain: imotno.bg
   concurrency: 2
   min_desc_len: 40
@@ -232,6 +283,8 @@ domains:
   include_regex: []
   exclude_any:
   - /share-image
+  description_selectors:
+  - '[class*="propertyLongDescription"]'
 - domain: sales.bcpea.org
   concurrency: 2
   min_desc_len: 80
@@ -240,6 +293,8 @@ domains:
   include_regex:
   - /properties/[0-9]+$
   exclude_any: []
+  description_selectors:
+  - .label__group-description
 - domain: estate-sales.uslugi.io
   concurrency: 2
   min_desc_len: 80

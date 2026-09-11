@@ -23,6 +23,8 @@ from .schemas import (
     InventoryCycleCompleteOut,
     InventoryCycleStartIn,
     InventoryCycleStartOut,
+    ListingsDeactivateIn,
+    ListingsDeactivateOut,
 )
 
 
@@ -105,13 +107,14 @@ def _normalize_url_list(value) -> List[str]:
 
 def _apply_images_to_listing(session: Session, *, item_url: str, cover: Optional[str], images: List[str]) -> None:
     """Persist cover + images to listings, even if the ORM model lacks the images column."""
-    # cover is optional; don't overwrite with NULL
+    # A completed detail scrape is authoritative. If publisher-owned media is
+    # absent, clear stale index/logo media instead of preserving it forever.
     session.execute(
         text(
             """
             UPDATE listings
             SET
-              image = COALESCE(:cover, image),
+              image = :cover,
               images = CAST(:images AS text[])
             WHERE item_url = :item_url
             """
@@ -319,7 +322,16 @@ class ExtractionService:
         results: List[ExtractionBatchResult] = []
         for p in payloads or []:
             out = self.create(p, commit=False)
-            results.append(ExtractionBatchResult(id=out.id, sourceUrl=out.sourceUrl))
+            mode = str((p.meta or {}).get("mode") or "").strip().lower()
+            results.append(
+                ExtractionBatchResult(
+                    id=out.id,
+                    # Detail writes update the canonical listing and return the
+                    # pre-existing index run as their persistence receipt. Keep
+                    # the response correlated to the submitted listing URL.
+                    sourceUrl=p.sourceUrl if mode == "detail" else out.sourceUrl,
+                )
+            )
 
         self.session.commit()
         return ExtractionBatchOut(results=results)
@@ -596,11 +608,41 @@ class ExtractionService:
         ).scalars()
         return list(rows)
 
+    def deactivate_listings(
+        self, payload: ListingsDeactivateIn
+    ) -> ListingsDeactivateOut:
+        """Deactivate only explicitly identified, currently-active listing URLs."""
+        clean = list(
+            dict.fromkeys(
+                value.strip()
+                for value in payload.urls
+                if isinstance(value, str) and value.strip().startswith("http")
+            )
+        )
+        if not clean:
+            return ListingsDeactivateOut(deactivated=0)
+
+        now = datetime.now(timezone.utc)
+        count = 0
+        for chunk in _chunks(clean, 500):
+            result = self.session.execute(
+                update(Listing)
+                .where(
+                    Listing.item_url.in_(chunk),
+                    Listing.active.is_(True),
+                )
+                .values(active=False, inactive_at=now)
+            )
+            count += int(result.rowcount or 0)
+        self.session.commit()
+        return ListingsDeactivateOut(deactivated=count)
+
     def detail_queue(
         self,
         domain: Optional[str] = None,
         url_contains: Optional[str] = None,
         limit: int = 200,
+        offset: int = 0,
     ) -> List[str]:
         """Return listing URLs that need a detail scrape.
 
@@ -611,18 +653,26 @@ class ExtractionService:
         recent `extraction_items.item_url` and inserting stub Listing rows (detail_done=false).
         """
         limit = max(1, min(int(limit), 500))
+        offset = max(0, min(int(offset), 2_000_000))
 
         stmt = select(Listing.item_url).where(Listing.detail_done.is_(False), Listing.active.is_(True))
         if domain:
             stmt = stmt.where(func.lower(Listing.domain).like(f"%{domain.lower()}%"))
         if url_contains:
             stmt = stmt.where(func.lower(Listing.item_url).like(f"%{url_contains.lower()}%"))
-        stmt = stmt.order_by(desc(Listing.updated_at)).limit(limit)
+        # A drain keeps the failures from earlier batches at the front of this
+        # stable ordering and advances ``offset`` past them for the remainder of
+        # that process. The next scheduled process starts again at offset zero,
+        # so failures are retried without starving the rest of the catalogue.
+        stmt = stmt.order_by(desc(Listing.updated_at), desc(Listing.id)).offset(offset).limit(limit)
 
         rows = self.session.execute(stmt).all()
         out: List[str] = [r[0] for r in rows if isinstance(r[0], str) and r[0].startswith("http")]
 
-        remaining = limit - len(out)
+        # Historical top-up is only safe at the head of the canonical queue.
+        # With an offset, an empty/short page means that this drain reached the
+        # end; adding historical rows here would make offset semantics unstable.
+        remaining = 0 if offset else limit - len(out)
         if remaining <= 0:
             return out
 
@@ -932,6 +982,9 @@ class ExtractionService:
         # The detail runner posts 1 item where rawText is the full description.
         items_in = list(payload.items or [])
         first = items_in[0] if items_in else None
+        detail_title = _sanitize(payload.pageTitle) or _sanitize(
+            getattr(first, "title", None) if first is not None else None
+        )
 
         # Never mark an empty/block/error page as detailed. Missing images are fine,
         # and no plausibility checks belong here; normalization handles quality later.
@@ -946,7 +999,6 @@ class ExtractionService:
         cover = _sanitize(getattr(first, "image", None)) if first is not None else None
         images = _sanitize(list(getattr(first, "images", None) or [])) if first is not None else []
         images = _normalize_url_list(images)
-        has_new_images = bool(images)
 
         now = datetime.now(timezone.utc)
 
@@ -956,8 +1008,8 @@ class ExtractionService:
             listing = Listing(
                 item_url=source_url,
                 domain=_url_domain(source_url),
-                title=_sanitize(payload.pageTitle) or _sanitize(getattr(first, "title", None)),
-                title_hash=_hash_text(_sanitize(payload.pageTitle) or _sanitize(getattr(first, "title", None))),
+                title=detail_title,
+                title_hash=_hash_text(detail_title),
                 image=cover,
                 created_at=now,
                 updated_at=now,
@@ -979,6 +1031,11 @@ class ExtractionService:
             listing.updated_at = now
             listing.detail_done = True
             listing.detail_scraped_at = extracted_at
+            if detail_title:
+                # Keep title_hash as the index fingerprint. Otherwise the next
+                # unchanged sitemap heartbeat would appear changed and enqueue
+                # the same detail again every day.
+                listing.title = detail_title
             listing.description = full_desc
             listing.description_hash = desc_hash
             # store full raw v2 payload for later normalization
@@ -988,11 +1045,12 @@ class ExtractionService:
                 listing.raw_payload = _jsonable(payload)
 
         # Persist cover + images to listings (images column may not be mapped on the ORM model)
-        if cover and listing is not None:
+        if listing is not None:
             listing.image = cover
-        if has_new_images or cover:
-            self.session.flush()
-            _apply_images_to_listing(self.session, item_url=source_url, cover=cover, images=images)
+        self.session.flush()
+        _apply_images_to_listing(
+            self.session, item_url=source_url, cover=cover, images=images
+        )
         # Persist raw payload even if ORM is out-of-sync with schema
         _apply_raw_payload_to_listing(self.session, item_url=source_url, raw_payload=_jsonable(payload.dict()))
 

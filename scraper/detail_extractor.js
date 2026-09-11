@@ -7,6 +7,25 @@
     return String(s || "").replace(/\s+/g, " ").trim();
   }
 
+  function isBoilerplateText(value) {
+    const text = normalize(value).toLowerCase();
+    if (!text) return false;
+    const markers = [
+      "използваме бисквитки",
+      "настройки на бисквитките",
+      "отговорно използване на вашите данни",
+      "we use cookies",
+      "cookie preferences",
+      "privacy preferences",
+      "verify you are human",
+      "human verification",
+      "enable javascript and cookies",
+      "checking your browser",
+      "access denied",
+    ];
+    return markers.some((marker) => text.includes(marker));
+  }
+
   function isVisible(el) {
     if (!(el instanceof Element)) return false;
     const style = window.getComputedStyle(el);
@@ -71,6 +90,7 @@
       (hint.includes("comment") ? 2 : 0);
 
     const txt = getText(el, 12000);
+    if (isBoilerplateText(txt)) return -Infinity;
     const len = txt.length;
 
     const lenScore =
@@ -117,17 +137,35 @@
     return t3 ? t3.slice(0, 200) : null;
   }
 
-  function extractDescription() {
+  function extractDescription(preferredSelectors = []) {
+    for (const selector of preferredSelectors || []) {
+      if (typeof selector !== "string" || !selector) continue;
+      let matches = [];
+      try { matches = Array.from(document.querySelectorAll(selector)); } catch (_) { continue; }
+      let preferred = "";
+      for (const el of matches) {
+        const style = window.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        // Exact per-domain selectors are authoritative. Some publishers leave
+        // their active tab at opacity:0 during animation even though its full
+        // readable body is rendered; only structural hiding should reject it.
+        if (style.display === "none" || style.visibility === "hidden" || !rect.width || !rect.height) continue;
+        const text = getText(el, 20000);
+        if (!isBoilerplateText(text) && text.length > preferred.length) preferred = text;
+      }
+      if (preferred.length >= 40) return preferred;
+    }
+
     const ogd = document.querySelector('meta[property="og:description"]');
     const ogdText = normalize(ogd?.getAttribute("content"));
-    if (ogdText && ogdText.length >= 120) return ogdText;
+    if (ogdText && ogdText.length >= 120 && !isBoilerplateText(ogdText)) return ogdText;
 
     const itemprop = document.querySelector('[itemprop="description"]');
     const itempropText = getText(itemprop, 12000);
-    if (itempropText && itempropText.length >= 120) return itempropText;
+    if (itempropText && itempropText.length >= 120 && !isBoilerplateText(itempropText)) return itempropText;
 
     const byLabel = findByLabelOpisanie();
-    if (byLabel && byLabel.length >= 120) return byLabel;
+    if (byLabel && byLabel.length >= 120 && !isBoilerplateText(byLabel)) return byLabel;
 
     const candidates = [];
 
@@ -182,13 +220,14 @@
     }
 
     const bestText = best ? getText(best, 12000) : "";
-    if (bestText && bestText.length >= 120) return bestText;
+    if (bestText && bestText.length >= 120 && !isBoilerplateText(bestText)) return bestText;
 
     const ps = Array.from(document.querySelectorAll("p,div,span")).slice(0, 800);
     let longest = "";
     for (const el of ps) {
       if (!isVisible(el)) continue;
       const t = getText(el, 12000);
+      if (isBoilerplateText(t)) continue;
       if (t.length > longest.length) longest = t;
     }
     return longest;
@@ -226,7 +265,7 @@
     return parts.length ? parts[0].url : null;
   }
 
-  function extractImages(maxCount = 60) {
+  function extractImages(maxCount = 60, preferredSelectors = []) {
     const out = [];
     const seen = new Set();
 
@@ -238,6 +277,55 @@
       if (seen.has(abs)) return;
       seen.add(abs);
       out.push(abs);
+    }
+
+    function scanRoots(roots) {
+      const dataAttrs = [
+        "data-full", "data-large", "data-big", "data-zoom", "data-image",
+        "data-img", "data-photo", "data-src", "data-original", "data-lazy",
+        "data-bg", "data-background", "data-background-image",
+      ];
+      const descendants = (root, selector) => [
+        ...(root.matches?.(selector) ? [root] : []),
+        ...Array.from(root.querySelectorAll(selector)),
+      ];
+
+      for (const root of roots) {
+        for (const img of descendants(root, "img")) {
+          add(pickLargestFromSrcset(img.getAttribute("srcset")));
+          for (const attr of dataAttrs) add(img.getAttribute(attr));
+          add(img.currentSrc);
+          add(img.getAttribute("src"));
+          if (out.length >= maxCount) return;
+        }
+        for (const source of descendants(root, "picture source[srcset]")) {
+          add(pickLargestFromSrcset(source.getAttribute("srcset")));
+          if (out.length >= maxCount) return;
+        }
+        for (const attr of dataAttrs) {
+          for (const el of descendants(root, `[${attr}]`)) {
+            add(el.getAttribute(attr));
+            if (out.length >= maxCount) return;
+          }
+        }
+        for (const anchor of descendants(root, "a[href]")) {
+          const href = anchor.getAttribute("href");
+          if (href && /\.(jpe?g|png|webp|gif)(\?|#|$)/i.test(href)) add(href);
+          if (out.length >= maxCount) return;
+        }
+      }
+    }
+
+    const preferredRoots = [];
+    for (const selector of preferredSelectors || []) {
+      if (typeof selector !== "string" || !selector) continue;
+      try { preferredRoots.push(...Array.from(document.querySelectorAll(selector))); } catch (_) {}
+    }
+    if (preferredRoots.length) {
+      scanRoots(Array.from(new Set(preferredRoots)));
+      // A configured gallery is authoritative: never fall through to page-wide
+      // logos, maps, broker portraits, or recommended-property thumbnails.
+      return out.slice(0, maxCount);
     }
 
     // meta images (often the cover)
@@ -334,11 +422,17 @@
 
   window.__listingDetailExtractor = {
     version: 2,
-    extract() {
+    extract(options = {}) {
       // Preserve existing behavior for title/description/images
-      const description = normalize(extractDescription());
+      const preferredSelectors = Array.isArray(options.descriptionSelectors)
+        ? options.descriptionSelectors
+        : [];
+      const description = normalize(extractDescription(preferredSelectors));
       const title = pickTitle();
-      const images = extractImages(60);
+      const preferredImageSelectors = Array.isArray(options.imageSelectors)
+        ? options.imageSelectors
+        : [];
+      const images = extractImages(60, preferredImageSelectors);
       const image = images.length ? images[0] : null;
 
       // ---- v2 raw harvester additions (generic, site-agnostic) ----

@@ -19,6 +19,8 @@ from .schemas import (
     InventoryCycleCompleteOut,
     InventoryCycleStartIn,
     InventoryCycleStartOut,
+    ListingsDeactivateIn,
+    ListingsDeactivateOut,
 )
 from .services import ExtractionService
 from .settings import Settings, get_settings
@@ -90,9 +92,15 @@ def create_app() -> FastAPI:
         domain: str | None = None,
         url_contains: str | None = None,
         limit: int = 200,
+        offset: int = 0,
         session: Session = Depends(get_session),
     ) -> DetailQueueOut:
-        urls = ExtractionService(session).detail_queue(domain=domain, url_contains=url_contains, limit=limit)
+        urls = ExtractionService(session).detail_queue(
+            domain=domain,
+            url_contains=url_contains,
+            limit=limit,
+            offset=offset,
+        )
         return DetailQueueOut(urls=urls)
 
     # Recovery helper: lets an interrupted sitemap run validate only URLs that
@@ -109,6 +117,17 @@ def create_app() -> FastAPI:
         return ExistingListingsOut(
             urls=ExtractionService(session).existing_active_urls(payload.urls)
         )
+
+    @app.post(
+        "/api/v1/listings/deactivate",
+        response_model=ListingsDeactivateOut,
+        dependencies=[Depends(require_api_key)],
+    )
+    def deactivate_listings(
+        payload: ListingsDeactivateIn,
+        session: Session = Depends(get_session),
+    ) -> ListingsDeactivateOut:
+        return ExtractionService(session).deactivate_listings(payload)
 
     # Inventory cycle endpoints used only by the regular/index runner.
     @app.post(

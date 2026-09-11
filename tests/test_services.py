@@ -3,10 +3,27 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from backend.app.services import (
+    _apply_images_to_listing,
     _index_fingerprint,
     _lock_listing_urls,
     _unverifiable_urls_from_meta,
 )
+
+
+class DetailMediaPersistenceTests(unittest.TestCase):
+    def test_empty_detail_media_clears_stale_cover_and_gallery(self):
+        session = Mock()
+        _apply_images_to_listing(
+            session,
+            item_url="https://example.bg/listing/1",
+            cover=None,
+            images=[],
+        )
+        statement, params = session.execute.call_args.args
+        self.assertIn("image = :cover", str(statement))
+        self.assertNotIn("COALESCE", str(statement))
+        self.assertIsNone(params["cover"])
+        self.assertEqual(params["images"], [])
 
 
 class IndexFingerprintTests(unittest.TestCase):

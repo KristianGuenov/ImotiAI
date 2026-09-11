@@ -70,6 +70,15 @@ class ExistingListingsOut(BaseModel):
     urls: List[str] = Field(default_factory=list)
 
 
+class ListingsDeactivateIn(BaseModel):
+    urls: List[str] = Field(default_factory=list, max_length=500)
+    reason: str = Field(default="detail_confirmed_dead", max_length=200)
+
+
+class ListingsDeactivateOut(BaseModel):
+    deactivated: int = 0
+
+
 # --- Inventory lifecycle ---
 
 
