@@ -124,6 +124,45 @@ _BOILERPLATE_MARKERS = (
     "access denied",
 )
 
+_CONTACT_SENTENCE_PATTERNS = (
+    re.compile(r"\bОбади\s+се\s+сега\s+и\s+цитирай\s+този\s+код\s+[A-Za-zА-Яа-я0-9_-]+\.?", re.I),
+    re.compile(r"\bЗа\s+(?:повече\s+)?информация(?:\s+(?:и|или)\s+огледи?)?[^.!?]*(?:[.!?]|$)", re.I),
+    re.compile(r"\bCall\s+(?:us|now)[^.!?]*(?:[.!?]|$)", re.I),
+    re.compile(r"\bIf you would like to arrange a viewing[^.!?]*(?:[.!?]|$)", re.I),
+)
+_EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
+_BG_PHONE_RE = re.compile(r"(?<!\d)(?:\+359|0)\s*(?:[() ./-]*\d){8,9}(?!\d)")
+_MASKED_PHONE_RE = re.compile(
+    r"(?<!\d)(?:\+359(?=[0-9() .*\u2022/-]{5,})[0-9() .*\u2022/-]{5,}|0(?=[0-9() .*\u2022/-]*\*)[0-9() .*\u2022/-]{5,})(?:\s*(?:show\s+number|виж\s+телефон))?",
+    re.I,
+)
+_CONTACT_LABEL_RE = re.compile(
+    r"\b(?:тел(?:ефон)?|моб(?:илен)?|phone)\s*[:.]?\s*(?:[,;/|\s]*(?:Отговорен\s+)?(?:брокер|агент)\s*:[^.!?]*)?",
+    re.I,
+)
+_DESCRIPTION_CUTOFF_MARKERS = (
+    "we look forward to your inquiry",
+    "to arrange a day and time for a meeting or viewing",
+    "are you looking for the right property for you",
+)
+
+
+def clean_property_description(value: Any) -> str:
+    """Remove contact calls-to-action while preserving property narrative."""
+    text_value = _nonempty_text(value)
+    text_value = _EMAIL_RE.sub("", text_value)
+    text_value = _MASKED_PHONE_RE.sub("", text_value)
+    text_value = _BG_PHONE_RE.sub("", text_value)
+    text_value = _CONTACT_LABEL_RE.sub("", text_value)
+    for pattern in _CONTACT_SENTENCE_PATTERNS:
+        text_value = pattern.sub("", text_value)
+    lowered = text_value.lower()
+    cutoffs = [lowered.find(marker) for marker in _DESCRIPTION_CUTOFF_MARKERS]
+    cutoffs = [position for position in cutoffs if position >= 0]
+    if cutoffs:
+        text_value = text_value[:min(cutoffs)]
+    return re.sub(r"\s+", " ", text_value).strip()
+
 
 def _is_boilerplate_text(value: Any) -> bool:
     text = _nonempty_text(value).lower()
@@ -600,6 +639,7 @@ class DomainRule:
     extractor_script: str
     description_selectors: List[str]
     image_selectors: List[str]
+    feature_selectors: List[str]
     inactive_selectors: List[str]
     inactive_regex: List[re.Pattern]
     include_any: List[str]
@@ -680,6 +720,11 @@ def load_rules(path: str) -> Tuple[DomainRule, List[DomainRule]]:
             image_selectors=[
                 str(value).strip()
                 for value in (dct.get("image_selectors") or [])
+                if isinstance(value, str) and value.strip()
+            ],
+            feature_selectors=[
+                str(value).strip()
+                for value in (dct.get("feature_selectors") or [])
                 if isinstance(value, str) and value.strip()
             ],
             inactive_selectors=[
@@ -942,6 +987,7 @@ class DetailExtractor:
         script_path: str,
         description_selectors: Optional[List[str]] = None,
         image_selectors: Optional[List[str]] = None,
+        feature_selectors: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Executes the in-page extractor and returns the full extraction dict.
@@ -954,6 +1000,7 @@ class DetailExtractor:
             {
                 "descriptionSelectors": description_selectors or [],
                 "imageSelectors": image_selectors or [],
+                "featureSelectors": feature_selectors or [],
             },
         )
         if not isinstance(out, dict) or not out.get("ok"):
@@ -1086,7 +1133,26 @@ def make_detail_payload(
       - add raw harvest fields (jsonld/state/kv/text blocks/contacts/media/signals)
     """
     title = extracted.get("title")
-    description = extracted.get("description") or ""
+    description = clean_property_description(extracted.get("description"))
+    property_features = extracted.get("property_features") or []
+    if isinstance(property_features, list):
+        feature_lines = []
+        seen_features: Set[Tuple[str, str]] = set()
+        for feature in property_features:
+            if not isinstance(feature, dict):
+                continue
+            key = _nonempty_text(feature.get("k"))[:100]
+            value = _nonempty_text(feature.get("v"))[:300]
+            signature = (key.casefold(), value.casefold())
+            if not key or not value or signature in seen_features:
+                continue
+            seen_features.add(signature)
+            feature_lines.append(f"- {key}: {value}")
+        if feature_lines:
+            feature_block = "Характеристики на имота:\n" + "\n".join(feature_lines)
+            description = f"{description.strip()}\n\n{feature_block}".strip()
+    else:
+        property_features = []
     image = extracted.get("image")
     images = extracted.get("images") or []
 
@@ -1117,6 +1183,7 @@ def make_detail_payload(
         "raw_jsonld",
         "raw_state_blobs",
         "raw_kv",
+        "property_features",
         "raw_text_blocks",
         "raw_contacts",
         "raw_media",
@@ -1147,6 +1214,7 @@ def make_detail_payload(
                 "raw_jsonld": raw_jsonld,
                 "raw_state_blobs": raw_state_blobs,
                 "raw_kv": raw_kv,
+                "property_features": property_features,
                 "raw_text_blocks": raw_text_blocks,
                 "raw_contacts": raw_contacts,
                 "raw_media": raw_media,
@@ -1223,6 +1291,7 @@ async def scrape_one(
             rule.extractor_script,
             rule.description_selectors,
             rule.image_selectors,
+            rule.feature_selectors,
         )
         extracted = clean_extracted_media(url, extracted)
         title = extracted.get("title")

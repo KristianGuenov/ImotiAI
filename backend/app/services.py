@@ -69,6 +69,7 @@ def _detail_payload_has_meaningful_content(first: Any) -> bool:
         "description",
         "raw_text_blocks",
         "raw_kv",
+        "property_features",
         "raw_jsonld",
         "raw_state_blobs",
         "raw_contacts",

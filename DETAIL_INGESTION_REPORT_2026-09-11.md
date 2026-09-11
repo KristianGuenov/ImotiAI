@@ -1,5 +1,44 @@
 # Detail ingestion verification — 2026-09-11
 
+## Property-feature follow-up
+
+The detail extractor now collects property facts that publishers render as
+tiles, definition lists, tables, microdata, JSON-LD, or short label/value
+pairs. These facts are stored in two compatible forms:
+
+- a normalized `Характеристики на имота:` block appended to the current
+  `listings.description`;
+- the original `{k, v, source}` objects in
+  `raw_payload.items[0].property_features`, ready for a later normalized table.
+
+Recognized facts include price/rent, total/net/built/plot area, property and
+construction type, address and administrative location, floor/floor count,
+year, orientation, heating, furnishing and condition, room/bed/bath counts,
+balconies, parking, elevator, yard, utilities, permits/status, energy class,
+maintenance, access/frontage, security, cadastral identifiers, and auction
+price/deposit/deadline/date. Contact, broker, agency, reference-number,
+view/share/favorite, advertising, filter, recommendation, navigation, map and
+cookie fields are rejected.
+
+The final balanced live audit used ten URLs per configured domain where ten
+canonical rows existed. It covered 307 URLs across all 35 configured detail
+rules: 262 were stored, 15 were deactivated on definitive publisher evidence,
+and 30 were deferred without deletion. The deferred set was Address (9), DSK
+Home (10), imoti.com (10), and one Novite Sgradi HTTP 520. `imotno.bg` had only
+seven active canonical rows, all seven passed. `alo.bg`,
+`en.realestates.bg`, `imoteka.bg`, and `realistimo.com` had no canonical rows
+in the current database, so a ten-row detail sample was impossible.
+
+The initial audit exposed and prompted fixes for recommendation-card values,
+map help text, whole-page contact panels, masked/slash-formatted telephone
+numbers, email addresses, and generic sales copy. After those fixes, targeted
+ten-row reruns passed for BulgarianProperties, Luximmo, Arco Real, and Plovdiv
+auction documents. Database assertions over the final affected-domain samples
+reported zero forbidden feature keys, zero suspicious feature values, zero
+duplicate normalized keys, zero email leaks, and zero contact-panel leaks.
+Document-oriented BBR/Sofia/Plovdiv sources intentionally retain their full
+property/auction prose when the publisher does not expose structured tiles.
+
 ## Outcome
 
 The detail pipeline was stopped when OLX began returning systemic HTTP 403
@@ -143,7 +182,7 @@ concurrency.
 
 ## Automated verification
 
-- 70 scraper/index-scheduler tests passed.
+- 73 scraper/index-scheduler tests passed.
 - 6 backend service tests passed, including authoritative clearing of stale
   detail media.
 - `node --check scraper/detail_extractor.js` passed.

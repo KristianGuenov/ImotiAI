@@ -17,6 +17,7 @@ class ExtractedItem(BaseModel):
     description: Optional[str] = None
     raw_jsonld: List[Dict[str, Any]] = Field(default_factory=list)
     raw_kv: List[Dict[str, Any]] = Field(default_factory=list)
+    property_features: List[Dict[str, Any]] = Field(default_factory=list)
     raw_text_blocks: List[Dict[str, Any]] = Field(default_factory=list)
     raw_state_blobs: List[Dict[str, Any]] = Field(default_factory=list)
     raw_contacts: Dict[str, Any] = Field(default_factory=dict)

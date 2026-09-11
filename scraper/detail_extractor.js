@@ -58,6 +58,21 @@
     return normalize(out).slice(0, maxLen);
   }
 
+  function getPreferredText(el, maxLen = 20000) {
+    // Domain selectors may point at a narrative wrapper which also contains a
+    // consultant/contact card. Strip those branches before reading the text.
+    const clone = el.cloneNode(true);
+    const irrelevant = [
+      "script", "style", "noscript", "form", "nav", "aside",
+      ".content-right", ".contact", ".contacts", ".agent", ".broker",
+      "[class*='contact-card']", "[class*='agent-card']", "[class*='broker-card']",
+    ];
+    for (const selector of irrelevant) {
+      try { clone.querySelectorAll(selector).forEach((node) => node.remove()); } catch (_) {}
+    }
+    return normalize(clone.textContent).slice(0, maxLen);
+  }
+
   function scoreCandidate(el) {
     if (!el || !(el instanceof Element)) return -Infinity;
     if (!isVisible(el)) return -Infinity;
@@ -150,7 +165,7 @@
         // their active tab at opacity:0 during animation even though its full
         // readable body is rendered; only structural hiding should reject it.
         if (style.display === "none" || style.visibility === "hidden" || !rect.width || !rect.height) continue;
-        const text = getText(el, 20000);
+        const text = getPreferredText(el, 20000);
         if (!isBoilerplateText(text) && text.length > preferred.length) preferred = text;
       }
       if (preferred.length >= 40) return preferred;
@@ -579,6 +594,190 @@
         return out;
       }
 
+      const PROPERTY_KEY_RE = new RegExp([
+        "цена|price|наем|rent|площ|area|size|квадратура",
+        "тип(?:\\s+на\\s+имота)?|вид\\s+имот|property\\s*type|сделка|offer\\s*type",
+        "местоположение|локация|location|адрес|address|град|city|област|region|район|district|квартал|neighbou?rhood|село|village",
+        "етаж|floor|етажност|floors|строителство|construction|building\\s*type|година|year\\s*built|завършен",
+        "изложение|orientation|exposure|отопление|heating|обзавеждане|furnish|състояние|condition",
+        "стаи|rooms?|спални|bedrooms?|бани|bathrooms?|тоалетни|wc|терас|балкон|гараж|паркомясто|parking",
+        "асансьор|elevator|двор|garden|yard|земя|land|парцел|plot|регулация|electric|електричество|ток|water|вода|канализац|sewer",
+        "акт\\s*1[456]|разрешение|permit|статус|status|енерги|energy|поддръжка|maintenance|общи\\s+части|common\\s+parts",
+        "височина|height|лице|frontage|достъп|access|път|road|ски\\s+лифт|море|sea|басейн|pool|охрана|security",
+        "идентификатор|кадастр|cadastr|начална\\s+цена|депозит|търг|auction|краен\\s+срок|deadline|дата\\s+на\\s+продажба",
+      ].join("|"), "i");
+
+      const IRRELEVANT_KEY_RE = /телефон|phone|мобилен|mobile|имейл|e-?mail|контакт|contact|брокер|broker|агент|agent|агенция|agency|офис|office|продавач|seller|потребител|user|реф(?:еренция)?|reference|код\s+(?:на\s+)?обяв|номер\s+на\s+обяв|listing\s*id|посещения|views?|сподели|share|добави|favorite|реклама|advert/i;
+      const IRRELEVANT_VALUE_RE = /(?:https?:\/\/|www\.|@[a-z0-9.-]+\.[a-z]{2,}|обади\s+се|изпрати\s+(?:запитване|съобщение)|виж\s+телефон|show\s+phone)/i;
+      const PROPERTY_KEY_ONLY_RE = /^(?:(?:обща|чиста|застроена|разгъната|дворна|total|net|built(?:-?up)?|living|plot)\s+)?(?:цена(?:\s+на\s+кв\.?\s*м\.?)?|price|наем|rent|площ|area|size|квадратура|тип(?:\s+на\s+имота)?|вид\s+имот|type\s+of\s+property|property\s*type|сделка|offer\s*type|местоположение|локация|location|адрес|address|град|city|област|region|район|district|квартал|neighbou?rhood|село|village|етаж|floor|етажност|floors|number\s+of\s+floors|строителство|construction|type\s+of\s+(?:building|construction)|building\s*type|година(?:\s+на\s+строителство)?|year\s*built|завършен|изложение|orientation|exposure|отопление|heating|обзавеждане|furnish(?:ed|ing)?|състояние|condition|стаи|rooms?|спални|bedrooms?|бани|bathrooms?|тоалетни|wc|тераси?|балкони?|гараж|паркомясто|parking|(?:covered|underground)\s+parking(?:\s+space)?|асансьор|elevator|lift|двор|garden|yard|земя|land|парцел|plot|регулация|electric(?:ity)?|електричество|ток|water|вода|канализация|sewer|акт\s*1[456]|разрешение|permit|статус|status|енергиен\s+клас|energy(?:\s+class)?|поддръжка|maintenance(?:\s+fee)?|общи\s+части|common\s+parts|височина|height|лице|frontage|достъп|access|път|road|ски\s+лифт|море|sea|басейн|pool|охрана|security|идентификатор|кадастрален\s+идентификатор|cadastral(?:\s+id)?|начална\s+цена|депозит|търг|auction|краен\s+срок|deadline|дата\s+на\s+продажба)$/i;
+
+      function cleanFeaturePart(value, maxLen) {
+        return normalize(value)
+          .replace(/^[\s:|•·\-–—]+|[\s:|•·\-–—]+$/g, "")
+          .slice(0, maxLen);
+      }
+
+      function isUsefulPropertyKey(value) {
+        const key = cleanFeaturePart(value, 100);
+        if (!key || key.length > 70 || !PROPERTY_KEY_ONLY_RE.test(key) || IRRELEVANT_KEY_RE.test(key)) return false;
+        // Values embedded into a parent tile must not become labels themselves.
+        // Keep genuine numbered labels such as "Акт 16" and auction dates.
+        if (/\d/.test(key) && !/акт\s*1[456]|дата|year|година/i.test(key)) return false;
+        return true;
+      }
+
+      function extractPropertyFeatures(rawPairs, jsonLd, maxPairs = 120) {
+        const candidates = [];
+        const BAD_CONTAINER_RE = /nav|menu|filter|search|similar|related|recommend|contact|agent|broker|footer|header|sidebar|cookie|advert|promo/i;
+        const BAD_PROPERTY_VALUE_RE = /openstreetmap|leaflet|carto|google\s*maps|this is the (?:approximate|exact) location|please get in contact|property type\s*-\s*all|избери|абонирай|заяви оглед|изпрати запитване|виж телефон|още обяви|зареждане на навигация/i;
+        const relevantNode = (node) => {
+          if (!node || !isVisible(node)) return false;
+          for (let current = node; current && current !== document.body; current = current.parentElement) {
+            const tag = (current.tagName || "").toLowerCase();
+            const hint = `${current.id || ""} ${String(current.className || "")}`;
+            if (["nav", "header", "footer", "aside", "form"].includes(tag) || BAD_CONTAINER_RE.test(hint)) return false;
+          }
+          return true;
+        };
+        const plausibleValue = (key, value) => {
+          if (value.length > 180 || (value.match(/;/g) || []).length > 2) return false;
+          if (BAD_PROPERTY_VALUE_RE.test(value) || IRRELEVANT_VALUE_RE.test(value) || isBoilerplateText(value)) return false;
+          if (/цена|price|наем|rent|площ|area|size|квадратура|етаж|floor|стаи|rooms?|спални|bedrooms?|бани|bathrooms?|тоалетни|година|year|депозит/i.test(key) && !/\d|партер|ground/i.test(value)) return false;
+          if (/асансьор|elevator/i.test(key) && !/^(?:да|не|yes|no|има|няма|наличен|available)$/i.test(value)) return false;
+          if (/изложение|orientation|exposure/i.test(key) && !/север|юг|изток|запад|north|south|east|west/i.test(value)) return false;
+          return true;
+        };
+        const add = (keyValue, rawValue, source) => {
+          const key = cleanFeaturePart(keyValue, 100);
+          const value = cleanFeaturePart(rawValue, 300);
+          if (!isUsefulPropertyKey(key) || !value || key.toLowerCase() === value.toLowerCase()) return;
+          if (!plausibleValue(key, value)) return;
+          candidates.push({ k: key, v: value, source });
+        };
+
+        for (const pair of rawPairs || []) add(pair.k, pair.v, pair.source || "kv");
+
+        // Property portals frequently render a tile as two short sibling nodes,
+        // without punctuation: e.g. <span>Етаж</span><strong>3 от 8</strong>.
+        const selectors = Array.isArray(options.featureSelectors) && options.featureSelectors.length
+          ? options.featureSelectors
+          : [
+              "[class*='feature']", "[class*='characteristic']", "[class*='attribute']",
+              "[class*='parameter']", "[class*='specification']", "[class*='property-info']",
+              "[class*='offer-info']", "[class*='detail-info']", "[class*='param']",
+              "[class*='amenit']", "[class*='fact']", "[class*='overview']",
+            ];
+        const roots = [];
+        for (const selector of selectors) {
+          if (typeof selector !== "string" || !selector) continue;
+          try { roots.push(...Array.from(document.querySelectorAll(selector)).slice(0, 500)); } catch (_) {}
+        }
+        for (const root of Array.from(new Set(roots)).slice(0, 1500)) {
+          if (!relevantNode(root)) continue;
+          const own = Array.from(root.children || [])
+            .filter((el) => isVisible(el))
+            .map((el) => cleanFeaturePart(getText(el, 350), 300))
+            .filter(Boolean);
+          if (own.length >= 2 && own.length <= 8) {
+            for (let i = 0; i < own.length; i++) {
+              if (!isUsefulPropertyKey(own[i])) continue;
+              const rest = own.filter((_, j) => j !== i && !isUsefulPropertyKey(own[j]));
+              if (rest.length) add(own[i], rest.join("; "), "tile");
+            }
+          }
+          const text = cleanFeaturePart(getText(root, 500), 450);
+          const colon = text.match(/^([^:]{2,100})\s*:\s*(.{1,300})$/);
+          if (colon) add(colon[1], colon[2], "tile_colon");
+        }
+
+        // CSS class names vary widely and are often minified. Exact visible
+        // labels are a safer anchor than guessing every publisher's classes.
+        // Pair the label with a short sibling or another child of its parent.
+        const labelNodes = Array.from(document.querySelectorAll("body *"))
+          .filter((node) => node.children.length === 0 && relevantNode(node))
+          .filter((node) => isUsefulPropertyKey(node.textContent || ""))
+          .slice(0, 1000);
+        for (const labelNode of labelNodes) {
+          const key = cleanFeaturePart(labelNode.textContent, 100);
+          const siblingCandidates = [
+            labelNode.nextElementSibling,
+            labelNode.previousElementSibling,
+          ].filter(Boolean);
+          for (const sibling of siblingCandidates) {
+            const value = cleanFeaturePart(getText(sibling, 350), 300);
+            if (value && !isUsefulPropertyKey(value)) {
+              add(key, value, "label_sibling");
+              break;
+            }
+          }
+          const parentParts = Array.from(labelNode.parentElement?.children || [])
+            .filter((node) => node !== labelNode && isVisible(node))
+            .map((node) => cleanFeaturePart(getText(node, 350), 300))
+            .filter((value) => value && !isUsefulPropertyKey(value));
+          if (parentParts.length && parentParts.length <= 2) add(key, parentParts.join("; "), "label_parent");
+        }
+
+        // Schema.org microdata is common on older Bulgarian portals.
+        const MICRODATA_KEYS = {
+          price: "Цена", priceCurrency: "Валута", floorSize: "Площ",
+          numberOfRooms: "Стаи", numberOfBedrooms: "Спални", numberOfBathroomsTotal: "Бани",
+          address: "Адрес", addressLocality: "Град", addressRegion: "Област",
+        };
+        for (const node of Array.from(document.querySelectorAll("[itemprop]")).slice(0, 1000)) {
+          const prop = node.getAttribute("itemprop") || "";
+          const label = MICRODATA_KEYS[prop];
+          if (!label) continue;
+          const value = node.getAttribute("content") || node.getAttribute("value") || getText(node, 350);
+          add(label, value, "microdata");
+        }
+
+        const STRUCTURED_KEYS = {
+          price: "Цена", priceCurrency: "Валута", floorSize: "Площ",
+          numberOfRooms: "Стаи", numberOfBedrooms: "Спални", numberOfBathroomsTotal: "Бани",
+          yearBuilt: "Година на строителство", floorLevel: "Етаж", numberOfFloors: "Етажност",
+          accommodationFloorPlan: "Разпределение", heatingType: "Отопление",
+          address: "Адрес", addressLocality: "Град", addressRegion: "Област",
+        };
+        const walkStructured = (value, depth = 0) => {
+          if (!value || depth > 6) return;
+          if (Array.isArray(value)) {
+            value.slice(0, 50).forEach((item) => walkStructured(item, depth + 1));
+            return;
+          }
+          if (typeof value !== "object") return;
+          const structuredType = String(value["@type"] || "");
+          if (/BreadcrumbList|ItemList|WebSite|Organization|Person/i.test(structuredType)) return;
+          if (value.url) {
+            try {
+              const itemUrl = new URL(String(value.url), location.href);
+              if (itemUrl.pathname !== location.pathname && depth <= 1) return;
+            } catch (_) {}
+          }
+          for (const [key, item] of Object.entries(value)) {
+            const label = STRUCTURED_KEYS[key];
+            if (label && (typeof item === "string" || typeof item === "number")) add(label, String(item), "jsonld");
+            else if (label && item && typeof item === "object") {
+              const amount = item.value ?? item.minValue ?? item.maxValue;
+              const unit = item.unitText ?? item.unitCode ?? "";
+              if (amount !== undefined) add(label, `${amount}${unit ? ` ${unit}` : ""}`, "jsonld");
+            }
+            if (item && typeof item === "object") walkStructured(item, depth + 1);
+          }
+        };
+        walkStructured(jsonLd);
+
+        const sourceRank = { dl: 8, table: 8, microdata: 7, tile: 6, tile_colon: 6, label_sibling: 5, label_parent: 4, label_value: 3, jsonld: 2, kv: 1 };
+        const best = new Map();
+        for (const pair of candidates) {
+          const normalizedKey = pair.k.toLowerCase().replace(/[^a-zа-я0-9]+/gi, " ").trim();
+          if (!normalizedKey) continue;
+          const score = (sourceRank[pair.source] || 0) * 1000 - pair.v.length;
+          const existing = best.get(normalizedKey);
+          if (!existing || score > existing.score) best.set(normalizedKey, { pair, score });
+        }
+        return Array.from(best.values()).map((item) => item.pair).slice(0, maxPairs);
+      }
+
       function extractTextBlocks(maxBlocks = 50) {
         const blocks = [];
         const headings = Array.from(document.querySelectorAll("h1,h2,h3")).slice(0, 30);
@@ -659,6 +858,7 @@
       const raw_jsonld = extractJsonLd(20);
       const raw_state_blobs = extractStateBlobs(8);
       const raw_kv = extractKvPairs(250);
+      const property_features = extractPropertyFeatures(raw_kv, raw_jsonld, 120);
       const raw_text_blocks = extractTextBlocks(50);
       const raw_contacts = extractContacts();
       const raw_media = extractMediaLinks();
@@ -673,11 +873,13 @@
         raw_jsonld,
         raw_state_blobs,
         raw_kv,
+        property_features,
         raw_text_blocks,
         raw_contacts,
         raw_media,
       };
       payload.signals = computeSignals(payload);
+      payload.signals.property_feature_count = property_features.length;
       return payload;
     },
   };

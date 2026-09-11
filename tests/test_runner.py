@@ -7,6 +7,8 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
+from playwright.async_api import async_playwright
+
 from scraper.runner import (
     ApiClient,
     HttpInventoryExtractor,
@@ -25,6 +27,7 @@ from scraper.detail_runner import (
     _is_boilerplate_text,
     _next_queue_offset,
     clean_extracted_media,
+    clean_property_description,
     has_meaningful_detail,
     load_rules,
     make_detail_payload,
@@ -78,6 +81,36 @@ class TargetsLoaderTests(unittest.TestCase):
                 "- name: broken\n  url: https://example.com/a\n"
                 "  validation_mode: wishful-thinking\n"
             )
+
+    def test_description_removes_contact_cta_but_keeps_property_facts(self):
+        cleaned = clean_property_description(
+            "Парцел с площ 900 кв.м. Телефон 0888 123 456. Обади се сега и цитирай този код 12345. Южно изложение."
+        )
+        self.assertEqual(cleaned, "Парцел с площ 900 кв.м. Южно изложение.")
+
+    def test_description_removes_slash_masked_and_embedded_contacts(self):
+        cleaned = clean_property_description(
+            "Имот с площ 90 кв.м. За справки тел. 032/656 422. "
+            "+359 88... show number broker@example.com Южно изложение."
+        )
+        self.assertNotIn("032/656", cleaned)
+        self.assertNotIn("+359", cleaned)
+        self.assertNotIn("example.com", cleaned)
+        self.assertIn("Имот с площ 90 кв.м.", cleaned)
+
+    def test_description_keeps_property_dates(self):
+        cleaned = clean_property_description(
+            "Разрешение за строеж от 01.09.2026 г.; Акт 16 до 30.11.2026 г."
+        )
+        self.assertIn("01.09.2026", cleaned)
+        self.assertIn("30.11.2026", cleaned)
+
+    def test_description_drops_trailing_generic_sales_copy(self):
+        cleaned = clean_property_description(
+            "Bright apartment with a south-facing terrace. We look forward to your inquiry. "
+            "Additional services and viewings are available from our agents."
+        )
+        self.assertEqual(cleaned, "Bright apartment with a south-facing terrace.")
 
     def test_proxy_url_is_translated_without_embedding_credentials(self):
         with patch.dict(
@@ -1079,6 +1112,28 @@ class DetailPayloadTests(unittest.TestCase):
             [{"@type": "Offer"}, {"@type": "Place"}],
         )
 
+    def test_property_features_are_appended_to_description_and_preserved(self):
+        features = [
+            {"k": "Площ", "v": "82 кв.м", "source": "tile"},
+            {"k": "Етаж", "v": "3 от 8", "source": "tile"},
+            {"k": "Площ", "v": "82 кв.м", "source": "jsonld"},
+        ]
+        payload = make_detail_payload(
+            "https://example.com/listing/2",
+            {
+                "title": "Listing",
+                "description": "Самостоятелно описание на имота.",
+                "property_features": features,
+            },
+        )
+        item = payload["items"][0]
+        self.assertEqual(item["property_features"], features)
+        self.assertIn("Характеристики на имота:", item["description"])
+        self.assertIn("- Площ: 82 кв.м", item["description"])
+        self.assertIn("- Етаж: 3 от 8", item["description"])
+        self.assertEqual(item["description"].count("- Площ: 82 кв.м"), 1)
+        self.assertEqual(item["rawText"], item["description"])
+
 
 class ApiClientTests(unittest.IsolatedAsyncioTestCase):
     async def test_dry_run_never_posts(self):
@@ -1092,6 +1147,47 @@ class ApiClientTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(result["dryRun"])
         finally:
             await api.close()
+
+
+class DetailExtractorBrowserTests(unittest.IsolatedAsyncioTestCase):
+    async def test_property_tiles_exclude_contacts_and_advertising(self):
+        script = (
+            Path(__file__).resolve().parents[1] / "scraper" / "detail_extractor.js"
+        ).read_text(encoding="utf-8")
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(headless=True)
+            try:
+                page = await browser.new_page()
+                await page.set_content(
+                    """
+                    <html><body>
+                      <h1>Тристаен апартамент</h1>
+                      <section class="description"><p>Просторен имот в тухлена сграда с добра локация.</p></section>
+                      <div class="property-features">
+                        <div class="feature"><span>Площ</span><strong>82 кв.м</strong></div>
+                        <div class="feature"><span>Етаж</span><strong>3 от 8</strong></div>
+                        <div class="feature"><span>Изложение</span><strong>юг, изток</strong></div>
+                        <div class="feature"><span>Телефон</span><strong>0888 123 456</strong></div>
+                        <div class="feature"><span>Агенция</span><strong>Най-добрите имоти</strong></div>
+                        <div class="feature"><span>Реклама</span><strong>Купете кредит</strong></div>
+                      </div>
+                    </body></html>
+                    """
+                )
+                await page.add_script_tag(content=script)
+                result = await page.evaluate(
+                    "() => window.__listingDetailExtractor.extract({})"
+                )
+            finally:
+                await browser.close()
+
+        pairs = {(item["k"], item["v"]) for item in result["property_features"]}
+        self.assertIn(("Площ", "82 кв.м"), pairs)
+        self.assertIn(("Етаж", "3 от 8"), pairs)
+        self.assertIn(("Изложение", "юг, изток"), pairs)
+        self.assertFalse(any("Телефон" in key for key, _ in pairs))
+        self.assertFalse(any("Агенция" in key for key, _ in pairs))
+        self.assertFalse(any("Реклама" in key for key, _ in pairs))
 
 
 if __name__ == "__main__":
